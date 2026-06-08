@@ -348,23 +348,78 @@ DASHBOARD_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KeyCrawl • Dashboard (Credential &amp; Wallet Key Leaks)</title>
+  <title>KeyCrawl - Nur Wallet Keys (simpel)</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .finding { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .danger { background: #450a0a; border-color: #7f1d1d; }
-    .category-card { transition: all .1s ease; }
-    .category-card:hover { transform: translateY(-1px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3); }
-  </style>
 </head>
-<body class="bg-zinc-950 text-zinc-200">
-  <div class="max-w-6xl mx-auto p-6">
-    <div class="flex items-center justify-between mb-6">
-      <div>
-        <a href="/" class="text-emerald-400 hover:underline">&larr; Back to Scanner</a>
-        <h1 class="text-3xl font-semibold tracking-tighter mt-1">Collection Dashboard</h1>
-        <p class="text-zinc-400 text-sm">Redacted collection of username/password + wallet private key leaks — for your own systems</p>
+<body class="bg-zinc-950 text-zinc-200 p-8 max-w-2xl mx-auto">
+  <h1 class="text-4xl font-bold mb-1">keycrawl</h1>
+  <p class="text-emerald-400 mb-6">Nur Wallet Private Keys • unredacted • im Browser • keine Speicherung</p>
+
+  <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
+    <input id="url" type="text" value="https://stableponzi.com/" 
+           class="w-full bg-zinc-950 border border-zinc-600 rounded-xl px-4 py-3 text-lg mb-3 focus:outline-none focus:border-emerald-500">
+    <button onclick="doScan()" 
+            class="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-xl font-medium text-lg">
+      Scan for Wallet Keys
+    </button>
+    <div id="status" class="mt-3 text-sm text-emerald-400 min-h-[1.25rem]"></div>
+  </div>
+
+  <div id="results" class="mt-6 hidden">
+    <div class="flex justify-between items-center mb-2">
+      <div class="font-semibold">Unredacted Wallet Keys (only)</div>
+      <button onclick="copyAll()" class="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded">Copy all</button>
+    </div>
+    <pre id="keys" class="bg-black p-4 rounded-xl text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800"></pre>
+  </div>
+
+  <div class="mt-8 text-xs text-zinc-500">
+    <strong>Legal:</strong> Nur eigene Seiten oder mit Erlaubnis. Sofort rotieren. Keine Auto-Transfer-Logik.
+  </div>
+
+  <script>
+    async function doScan() {
+      const url = document.getElementById('url').value.trim();
+      const status = document.getElementById('status');
+      const results = document.getElementById('results');
+      const keysPre = document.getElementById('keys');
+      if (!url) { alert('URL?'); return; }
+      status.textContent = 'Scanning...';
+      results.classList.add('hidden');
+      try {
+        const r = await fetch('/scan-wallet-keys', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({url: url})
+        });
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        if (!d.keys || d.keys.length === 0) {
+          keysPre.textContent = 'Keine Wallet Keys gefunden.';
+        } else {
+          keysPre.textContent = d.keys.join('\n');
+        }
+        results.classList.remove('hidden');
+        status.textContent = `Fertig: ${d.keys.length} Keys von ${d.target}`;
+      } catch(e) {
+        status.textContent = 'Error: ' + e.message;
+        console.error(e);
+      }
+    }
+    function copyAll() {
+      const t = document.getElementById('keys').textContent;
+      if (!t) return;
+      navigator.clipboard.writeText(t).then(() => {
+        const orig = event.target.innerText;
+        event.target.innerText = 'Kopiert!';
+        setTimeout(() => event.target.innerText = orig, 1200);
+      });
+    }
+    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only).', 'color:#4ade80');
+  </script>
+</body>
+</html>
+"""
 
         <div class="mt-3 mb-6 bg-yellow-900 border border-yellow-600 rounded-2xl p-4 text-sm">
           <div class="font-semibold text-yellow-300 mb-2">Quick local unredacted export (one click from here)</div>
@@ -1012,6 +1067,46 @@ async def api_findings(secret_type: str | None = None):
 async def api_categories():
     """Category counts for the dashboard UI."""
     return await get_category_counts()
+
+
+@app.post("/scan-wallet-keys")
+async def scan_wallet_keys(req: ScanRequest):
+    """Simple endpoint for the user's request: scan and return ONLY unredacted wallet private keys.
+    No DB storage, no redaction for this, ephemeral. Everything in browser.
+    """
+    try:
+        result: ScanResult = await crawl_and_scan(
+            req.url,
+            max_depth=1,
+            max_pages=10,
+            same_domain_only=True,
+            concurrency=3,
+            request_delay=0.05,
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    wallet_types = [
+        "Solana Private Key",
+        "Solana Private Key (raw base58)",
+        "Ethereum / EVM Private Key",
+        "Wallet Mnemonic / Seed Phrase",
+        "Wallet Private Key",
+    ]
+
+    keys = []
+    for f in result.findings:
+        if any(wt in f.secret_type for wt in wallet_types):
+            raw = f.value
+            if raw and len(raw) > 20:
+                keys.append(raw)
+
+    return {
+        "target": req.url,
+        "pages_crawled": result.pages_crawled,
+        "keys": keys,
+        "note": "Only wallet private keys (unredacted). For your own sites. No storage."
+    }
 
 
 # Allow running with: python app.py (for Railway worker or local test)
