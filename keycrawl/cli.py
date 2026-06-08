@@ -264,6 +264,67 @@ def patterns():
 
 
 @app.command()
+def archive(
+    file: str = typer.Option(
+        "keycrawl-unredacted-archive.jsonl",
+        "--file",
+        "-f",
+        help="Path to the local unredacted archive (JSON Lines). Use KEYCRAWL_UNREDACTED_ARCHIVE env to set default.",
+    ),
+    limit: int = typer.Option(10, "--limit", "-l", help="Maximum number of scan exports to show (newest first)"),
+    show_raw: bool = typer.Option(False, "--show-raw", help="Show the actual raw secret values (use with care)"),
+):
+    """View your local unredacted archive file (the one grown by --export-full)."""
+    import json
+    import os
+    from datetime import datetime
+
+    archive_path = os.getenv("KEYCRAWL_UNREDACTED_ARCHIVE", file)
+
+    if not os.path.exists(archive_path):
+        rprint(f"[red]Archive file not found: {archive_path}[/red]")
+        rprint("Run scans with --export-full to create/append to it.")
+        return
+
+    records = []
+    with open(archive_path, "r", encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    pass
+
+    if not records:
+        rprint("[yellow]Archive is empty.[/yellow]")
+        return
+
+    # Show newest first
+    records = records[-limit:][::-1]
+
+    rprint(f"[bold]Local unredacted archive:[/bold] {archive_path}")
+    rprint(f"Total exports in file: {len(records) if len(records) < limit else 'more than ' + str(limit)} (showing up to {limit})")
+    rprint("[red]WARNING: This file contains raw secrets. Do not share it.[/red]\n")
+
+    for i, rec in enumerate(records, 1):
+        scan = rec.get("scan", {})
+        exported_at = rec.get("exported_at", "unknown")
+        target = scan.get("target", "?")
+        num_findings = len(rec.get("findings", []))
+        rprint(f"[cyan]{i}.[/cyan] {exported_at} | {target} | {num_findings} findings")
+
+        if show_raw:
+            for f in rec.get("findings", []):
+                rprint(f"   [red]{f.get('secret_type')}[/red]: {f.get('value')}")
+        else:
+            for f in rec.get("findings", []):
+                rprint(f"   {f.get('secret_type')}: {f.get('value_redacted')} (at {f.get('url')})")
+
+        rprint("")
+
+
+@app.command()
 def check(
     text: str = typer.Argument(..., help="Raw text/blob to test against the secret finders (for debugging)"),
 ):

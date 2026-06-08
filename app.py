@@ -230,7 +230,8 @@ INDEX_HTML = """<!doctype html>
     <div class="mt-12 text-[10px] text-zinc-500 leading-relaxed border-t border-zinc-900 pt-6">
       <strong class="text-zinc-400">Legal &amp; Responsible Use:</strong> Only scan websites you own or have explicit written permission to test.
       Finding real credentials can be a serious security issue. This tool is intended for authorized security assessments, bug bounty programs,
-      and defensive research. The authors are not responsible for misuse. Raw secret values are never stored on the server.
+      and defensive research. The authors are not responsible for misuse. Raw secret values are never stored in the persistent collection.
+      Use --export-full (CLI) or the live result + /api/scan/.../full-export for full raw data (per scan, your responsibility).
     </div>
   </div>
 
@@ -239,6 +240,33 @@ INDEX_HTML = """<!doctype html>
     document.body.addEventListener('htmx:afterSwap', () => {
       // could add copy buttons etc. later
     });
+
+    function downloadFullRaw(jobId) {
+      if (!jobId) {
+        alert('No job ID available for this result.');
+        return;
+      }
+      fetch(`/api/scan/${jobId}/full-export`)
+        .then(response => {
+          if (!response.ok) throw new Error('Download failed: ' + response.status);
+          return response.blob();
+        })
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = `keycrawl-full-raw-${jobId}.json`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        })
+        .catch(err => {
+          console.error(err);
+          alert('Failed to download full raw JSON: ' + err.message + '\nYou can also manually call /api/scan/' + jobId + '/full-export');
+        });
+    }
   </script>
 </body>
 </html>
@@ -265,8 +293,17 @@ RESULT_PARTIAL = """
     <strong>⚠️ LIVE SCAN RESULT — RAW SECRETS VISIBLE HERE</strong><br>
     These values are only shown for the scan you just triggered (in-memory only).<br>
     They are <strong>NOT</strong> saved to the permanent collection or dashboard.<br>
-    The collection (/dashboard) only ever stores redacted versions.<br>
-    <strong>For a downloadable JSON of this scan including raw values:</strong> call /api/scan/&lt;job_id&gt;/full-export while this result is still fresh (job_id is in the URL or your scan response).
+    The collection (/dashboard) only ever stores redacted versions.
+  </div>
+
+  <div class="mb-4">
+    <button onclick="downloadFullRaw('{{ job_id }}')"
+            class="w-full bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-black font-semibold px-4 py-2 rounded-xl text-sm flex items-center justify-center gap-2">
+      ⬇️ Download full raw JSON (unredacted values for this scan only)
+    </button>
+    <div class="text-[10px] text-yellow-400 mt-1 text-center">
+      Job: {{ job_id }} — This downloads the complete raw secrets found in this specific scan. Handle with care.
+    </div>
   </div>
   <div class="space-y-3">
     {% for f in findings %}
@@ -328,6 +365,12 @@ DASHBOARD_HTML = """<!doctype html>
         <a href="/" class="text-emerald-400 hover:underline">&larr; Back to Scanner</a>
         <h1 class="text-3xl font-semibold tracking-tighter mt-1">Collection Dashboard</h1>
         <p class="text-zinc-400 text-sm">Redacted collection of username/password + wallet private key leaks — for your own systems</p>
+        <div class="mt-2 text-xs bg-zinc-800 border border-zinc-700 rounded p-2">
+          <strong>Unredacted / raw values:</strong> Not stored in this collection (by design).<br>
+          • After a scan: raw values are shown in the live result.<br>
+          • CLI: use <code>--export-full</code> to append full raw data to your local <code>keycrawl-unredacted-archive.jsonl</code> (or set KEYCRAWL_UNREDACTED_ARCHIVE).<br>
+          • Web API for a live job: <code>/api/scan/&lt;job_id&gt;/full-export</code>
+        </div>
       </div>
       <div class="text-xs text-right text-zinc-500">
         Data lives in <span class="font-mono">findings.db</span><br>
@@ -625,6 +668,7 @@ async def get_results(job_id: str):
     return HTMLResponse(
         render(
             RESULT_PARTIAL,
+            job_id=job_id,
             target=r.get("target"),
             pages=r.get("pages_crawled", 0),
             findings=r.get("findings", []),

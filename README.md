@@ -200,7 +200,9 @@ For the actual secret values during your own controlled scans:
 
 - **CLI**: `--show-raw` to see raw values directly in the table output for this run.
 
-- **Web**: Live result after a scan shows the raw values. Use `/api/scan/<job_id>/full-export` for a downloadable JSON of that scan's full data (available only while the job is in memory).
+- **Web**: After running a scan in the UI, the live result immediately shows the raw (unredacted) values **and** has a prominent "Download full raw JSON" button that fetches `/api/scan/<job_id>/full-export` and downloads the complete unredacted data for that scan only. No unredacted export button in the historical /dashboard collection (by design — the collection stores redacted data only).
+
+- **CLI archive viewer**: `python -m keycrawl archive` (or with `--file path/to/archive.jsonl --show-raw`) to view your local growing unredacted archive file in the terminal.
 
 The `/dashboard` collection and persistent DB always stay **redacted-only** + context. This is intentional.
 
