@@ -805,10 +805,20 @@ async def api_full_export(job_id: str):
 
     # Return the done_result which for live jobs includes the full findings with 'value'
     result = job.get("result", {})
+    # Build findings with explicit raw_value for clarity in exports
+    raw_findings = []
+    for f in result.get("findings", []):
+        if isinstance(f, dict):
+            ff = f.copy()
+        else:
+            ff = f.model_dump() if hasattr(f, 'model_dump') else dict(f)
+        ff["raw_value"] = ff.pop("value", None)  # UNREDACTED raw secret
+        raw_findings.append(ff)
+
     export = {
-        "_WARNING": "RAW SECRET VALUES INCLUDED. This is only for the scan you just performed. "
+        "_WARNING": "RAW SECRET VALUES INCLUDED under 'raw_value' in each finding. This is only for the scan you just performed. "
                     "Handle with extreme care. The KeyCrawl persistent collection (/dashboard) stores only redacted data. "
-                    "Rotate any real private keys immediately.",
+                    "Rotate any real private keys immediately. The 'value_redacted' is the masked version.",
         "job_id": job_id,
         "target": result.get("target"),
         "started_at": result.get("started_at"),
@@ -816,7 +826,7 @@ async def api_full_export(job_id: str):
         "pages_crawled": result.get("pages_crawled"),
         "stats": result.get("stats"),
         "errors": result.get("errors"),
-        "findings": result.get("findings", []),  # includes 'value' (raw) for this live export
+        "findings": raw_findings,  # includes 'raw_value' (unredacted)
     }
     return JSONResponse(export)
 
