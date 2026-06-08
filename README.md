@@ -187,7 +187,16 @@ Since the scanner is now limited to passwords/usernames + wallet private keys, y
 For the actual secret values during your own controlled scans:
 
 - **CLI**: `python -m keycrawl scan https://your-own-site.example --export-full`
-  Writes a local JSON with the **full raw findings** (plus strong warnings). Not stored by the tool.
+  Appends the complete raw findings (unredacted secrets) to a **single growing local archive file**
+  (default `keycrawl-unredacted-archive.jsonl` in the current directory, using JSON Lines so it can be safely appended to).
+  The file grows with every export.
+
+  You can force it to always use the same file across different directories with the environment variable:
+  ```bash
+  export KEYCRAWL_UNREDACTED_ARCHIVE=~/secure/keycrawl-archive.jsonl
+  ```
+
+  The KeyCrawl tool itself never puts raw secrets into its persistent collection (`/dashboard` or `findings.db`).
 
 - **CLI**: `--show-raw` to see raw values directly in the table output for this run.
 

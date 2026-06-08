@@ -94,9 +94,13 @@ def scan(
     export_full: bool = typer.Option(
         False,
         "--export-full",
-        help="After the scan, export the COMPLETE findings (including raw secret values) to a local timestamped JSON file. "
-             "HUGE WARNING: The file will contain actual usable secrets. Only use for scanning your own controlled systems. "
-             "The tool does NOT store these in any persistent collection or DB. You are responsible for securing/deleting the export file.",
+        help="Append the COMPLETE findings (including raw secret values) to a single growing local archive file. "
+             "Default: keycrawl-unredacted-archive.jsonl in current dir. "
+             "Override with env KEYCRAWL_UNREDACTED_ARCHIVE=/path/to/my-archive.jsonl "
+             "so it always appends to the same file. "
+             "HUGE WARNING: Contains actual usable secrets. Only for your own controlled systems. "
+             "The tool's persistent collection (--persist / dashboard) stays redacted-only. "
+             "You are fully responsible for this local file.",
     ),
 ):
     """Crawl a site and hunt for usernames/passwords + wallet private keys.
@@ -106,8 +110,11 @@ def scan(
     Use --persist to add the (redacted) findings to the persistent collection
     that is also shown in the web dashboard at /dashboard.
 
-    Use --show-raw or --export-full to get the actual secret values for the *current scan only*
-    (writes local file or shows in terminal). The persistent collection always stays redacted.
+    Use --show-raw to see raw values directly in the terminal for this run.
+    Use --export-full to append the full raw findings (unredacted) to a single growing local archive file
+    (default: keycrawl-unredacted-archive.jsonl next to where you run the command).
+    Override location with env var KEYCRAWL_UNREDACTED_ARCHIVE.
+    The tool's persistent collection (--persist / /dashboard) always stays redacted-only.
     """
     rprint(f"[bold]KeyCrawl[/bold] → scanning [blue]{url}[/blue] (depth={depth}, max_pages={max_pages})")
 
@@ -184,24 +191,26 @@ def _persist_redacted(result: ScanResult, safe_findings: list[dict]) -> None:
 
 
 def _export_full_scan(result: ScanResult) -> None:
-    """Export the full scan result including raw secrets to a local file.
+    """Append the full scan result (including raw secrets) to a single local archive file.
 
-    This is provided so the operator can have the complete data for their own
-    controlled scans / archives. The tool itself never stores raw values in
-    its persistent collection or dashboard.
+    This grows one file over time with every --export-full run.
+    The tool itself never stores raw values in its persistent collection or dashboard.
     """
     import json
+    import os
     from datetime import datetime
 
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"keycrawl-full-export-{ts}.json"
+    # Single accumulating archive file (JSON Lines for safe appending).
+    # Can be overridden with env var KEYCRAWL_UNREDACTED_ARCHIVE so it stays in one place
+    # even when you run the CLI from different project directories.
+    archive_file = os.getenv("KEYCRAWL_UNREDACTED_ARCHIVE", "keycrawl-unredacted-archive.jsonl")
 
-    # Prepare a full dump: include everything from the result, plus raw values
-    export_data = {
-        "_WARNING": "THIS FILE CONTAINS ACTUAL SECRET VALUES (raw private keys, API keys, etc.). "
-                    "Handle with extreme care. Delete after use if possible. "
-                    "This export was created by the operator for their own controlled scan. "
-                    "The KeyCrawl tool does not store or archive raw secrets in its database or dashboard.",
+    # One record per export
+    record = {
+        "exported_at": datetime.now().isoformat(),
+        "_WARNING": "THIS RECORD CONTAINS ACTUAL RAW SECRET VALUES (private keys, passwords, etc.). "
+                    "This is a local file you control. Handle with extreme care. "
+                    "The KeyCrawl tool does NOT store raw secrets in its database or /dashboard collection.",
         "scan": {
             "target": result.target,
             "started_at": result.started_at,
@@ -225,14 +234,16 @@ def _export_full_scan(result: ScanResult) -> None:
     }
 
     try:
-        with open(filename, "w", encoding="utf-8") as fp:
-            json.dump(export_data, fp, indent=2, ensure_ascii=False)
+        with open(archive_file, "a", encoding="utf-8") as fp:
+            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-        rprint(f"\n[bold yellow]FULL EXPORT WRITTEN: {filename}[/bold yellow]")
-        rprint("[bold red]This file contains RAW SECRETS. Secure it or delete it immediately after use.[/bold red]")
-        rprint("[dim]The persistent collection (--persist / /dashboard) remains redacted-only.[/dim]")
+        rprint(f"\n[bold yellow]APPENDED to growing archive: {archive_file}[/bold yellow]")
+        rprint(f"[yellow]→ Absolute path: {os.path.abspath(archive_file)}[/yellow]")
+        rprint("[yellow]→ Future --export-full runs (when using the same archive path via env var) will keep appending here.[/yellow]")
+        rprint("[bold red]This file now contains RAW (unredacted) SECRETS from multiple scans. Treat it as extremely sensitive.[/bold red]")
+        rprint("[dim]The tool's persistent collection (--persist / /dashboard) remains redacted-only.[/dim]")
     except Exception as e:
-        rprint(f"[red]Failed to write full export: {e}[/red]")
+        rprint(f"[red]Failed to append full export: {e}[/red]")
 
 
 @app.command()
