@@ -11,39 +11,32 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sqlite3
 import time
 import uuid
 from typing import Any
 
-import aiosqlite
 from fastapi import FastAPI, BackgroundTasks, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from keycrawl.scanner import crawl_and_scan, ScanResult
+from keycrawl.scanner import crawl_and_scan, ScanResult, findings_to_safe_dicts
+from keycrawl import storage
+
+# Re-export for backward compatibility / other modules
+DB_PATH = storage.DB_PATH
+init_db = storage.init_db
+save_scan_result = storage.save_scan_result
+get_all_findings = storage.get_all_findings
+get_category_counts = storage.get_category_counts
+get_high_risk_findings = storage.get_high_risk_findings
 
 # ------------------------------------------------------------------
-# PERSISTENT STORAGE (redacted findings ONLY - never store raw secrets)
+# SAFETY NOTICE (repeated from storage.py)
 # ------------------------------------------------------------------
-DB_PATH = os.getenv("KEYCRAWL_DB", "findings.db")
-
-# WARNING: This tool is for authorized security research and leak detection.
-# Storing discovered private keys (even redacted) must be handled with extreme care.
-# The following functionality deliberately does NOT and WILL NEVER contain:
-# - Loading of private keys
-# - Construction of Solana (or any other) transactions
-# - Automatic or manual "draining", "sweeping", or sending of funds/tokens
-# - Any interaction with wallets using discovered secrets
-#
-# If a Solana (or any) private key is discovered during a scan, it means the
-# corresponding wallet is compromised. The only correct action is:
-# 1. Immediate rotation of the key/wallet by the legitimate owner.
-# 2. Responsible disclosure if you found it on a third-party site.
-#
-# Any attempt to use a discovered private key to move assets you do not own
-# is theft, unauthorized access, and a serious criminal offense.
-# This software will never assist with, contain code for, or encourage such actions.
+# Raw secret values are NEVER stored by this application.
+# The dashboard and DB only ever contain redacted representations.
+# Previous requests to store raw private keys or to automatically drain
+# wallets when Solana (or other) private keys are found have been refused.
 # ------------------------------------------------------------------
 
 app = FastAPI(
@@ -54,7 +47,7 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def on_startup():
-    await init_db()
+    await storage.init_db()
 
 # In-memory job store (ephemeral - perfect for Railway one-off scans)
 JOBS: dict[str, dict[str, Any]] = {}
@@ -69,95 +62,8 @@ class ScanRequest(BaseModel):
     same_domain_only: bool = True
 
 
-async def init_db() -> None:
-    """Create tables if they don't exist. Only stores redacted data + metadata."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS scans (
-                id TEXT PRIMARY KEY,
-                target TEXT NOT NULL,
-                started_at REAL NOT NULL,
-                finished_at REAL,
-                pages_crawled INTEGER DEFAULT 0
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS findings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_id TEXT,
-                discovered_at REAL NOT NULL,
-                url TEXT NOT NULL,
-                secret_type TEXT NOT NULL,
-                value_redacted TEXT NOT NULL,
-                context TEXT,
-                entropy REAL,
-                pattern_name TEXT,
-                FOREIGN KEY (scan_id) REFERENCES scans(id)
-            )
-        """)
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_findings_type ON findings(secret_type)")
-        await db.execute("CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id)")
-        await db.commit()
-
-
-async def save_scan_result(scan_id: str, result: dict) -> None:
-    """Persist a completed scan + its redacted findings to the collection DB."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO scans (id, target, started_at, finished_at, pages_crawled) VALUES (?, ?, ?, ?, ?)",
-            (
-                scan_id,
-                result.get("target"),
-                result.get("started_at") or time.time(),
-                result.get("finished_at"),
-                result.get("pages_crawled", 0),
-            ),
-        )
-        now = time.time()
-        for f in result.get("findings", []):
-            await db.execute(
-                """INSERT INTO findings
-                   (scan_id, discovered_at, url, secret_type, value_redacted, context, entropy, pattern_name)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    scan_id,
-                    now,
-                    f.get("url"),
-                    f.get("secret_type"),
-                    f.get("value_redacted"),
-                    f.get("context"),
-                    f.get("entropy"),
-                    f.get("pattern_name"),
-                ),
-            )
-        await db.commit()
-
-
-async def get_all_findings(secret_type: str | None = None) -> list[dict]:
-    """Return collected findings (always redacted)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        if secret_type:
-            cursor = await db.execute(
-                "SELECT * FROM findings WHERE secret_type = ? ORDER BY discovered_at DESC LIMIT 500",
-                (secret_type,),
-            )
-        else:
-            cursor = await db.execute(
-                "SELECT * FROM findings ORDER BY discovered_at DESC LIMIT 1000"
-            )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-
-async def get_category_counts() -> list[dict]:
-    """Aggregate counts per secret category for the dashboard."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT secret_type, COUNT(*) as count FROM findings GROUP BY secret_type ORDER BY count DESC"
-        )
-        rows = await cursor.fetchall()
-        return [{"secret_type": r[0], "count": r[1]} for r in rows]
+# DB functions are now provided by keycrawl.storage (imported above).
+# The web layer only ever works with the redacted-safe versions.
 
 
 def _sanitize_url(u: str) -> str:
@@ -189,27 +95,37 @@ async def _run_scan_job(job_id: str, req: ScanRequest) -> None:
                 d.pop("value", None)
                 safe_findings.append(d)
 
+            started_at = JOBS[job_id].get("started_at") or result.started_at
+            finished_at = time.time()
+
             done_result = {
                 "target": result.target,
                 "pages_crawled": result.pages_crawled,
                 "findings": safe_findings,
                 "stats": result.stats,
                 "errors": result.errors,
-                "started_at": JOBS[job_id].get("started_at"),
-                "finished_at": time.time(),
+                "started_at": started_at,
+                "finished_at": finished_at,
             }
             JOBS[job_id].update(
                 {
                     "status": "done",
-                    "finished_at": time.time(),
+                    "finished_at": finished_at,
                     "result": done_result,
                 }
             )
-            # Persist to the permanent collection (redacted data only)
+
+            # Persist redacted findings to the shared collection (dashboard DB)
             try:
-                await save_scan_result(job_id, done_result)
+                await storage.save_scan_result(
+                    scan_id=job_id,
+                    target=result.target,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    pages_crawled=result.pages_crawled,
+                    findings=safe_findings,
+                )
             except Exception as db_exc:
-                # Non-fatal: the current job result is still available in memory
                 print(f"[keycrawl] DB save failed (non-fatal): {db_exc}")
         except Exception as e:
             JOBS[job_id].update(

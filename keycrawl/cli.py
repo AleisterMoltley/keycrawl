@@ -8,8 +8,10 @@ Usage examples:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+import time
 from typing import Optional
 
 import typer
@@ -17,7 +19,8 @@ from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 
-from .scanner import ScanResult, crawl_and_scan, find_secrets_in_text
+from .scanner import ScanResult, crawl_and_scan, find_secrets_in_text, findings_to_safe_dicts
+from . import storage
 
 app = typer.Typer(
     name="keycrawl",
@@ -64,19 +67,35 @@ def scan(
     concurrency: int = typer.Option(6, "--concurrency", "-c", min=1, max=20),
     delay: float = typer.Option(0.12, "--delay", help="Politeness delay between requests (seconds)"),
     timeout: float = typer.Option(13.0, "--timeout", help="Per-request timeout"),
+    persist: bool = typer.Option(
+        False,
+        "--persist",
+        "--save",
+        help="Persist redacted findings to the shared collection database (findings.db). "
+             "Raw secret values are NEVER stored — only redacted versions + metadata.",
+    ),
 ):
-    """Crawl a site and hunt for secrets."""
+    """Crawl a site and hunt for secrets.
+
+    Use --persist to add the (redacted) findings to the persistent collection
+    that is also shown in the web dashboard at /dashboard.
+    """
     rprint(f"[bold]KeyCrawl[/bold] → scanning [blue]{url}[/blue] (depth={depth}, max_pages={max_pages})")
 
+    if persist:
+        rprint("[yellow]--persist enabled: only redacted findings will be written to the DB.[/yellow]")
+
     try:
-        result: ScanResult = crawl_and_scan(
-            url,
-            max_depth=depth,
-            max_pages=max_pages,
-            same_domain_only=same_domain,
-            concurrency=concurrency,
-            request_delay=delay,
-            timeout_per_page=timeout,
+        result: ScanResult = asyncio.run(
+            crawl_and_scan(
+                url,
+                max_depth=depth,
+                max_pages=max_pages,
+                same_domain_only=same_domain,
+                concurrency=concurrency,
+                request_delay=delay,
+                timeout_per_page=timeout,
+            )
         )
     except KeyboardInterrupt:
         rprint("\n[red]Interrupted by user[/red]")
@@ -85,18 +104,45 @@ def scan(
         rprint(f"[red]Scan failed:[/red] {exc}")
         raise typer.Exit(1)
 
+    # Always prepare a safe (redacted) version
+    safe_findings = findings_to_safe_dicts(result.findings)
+
     if json_output:
-        # Never include raw .value in default JSON for safety. User can re-run if needed.
+        # Never include raw .value
         safe = result.model_dump(mode="json")
         for f in safe.get("findings", []):
             f.pop("value", None)
         print(json.dumps(safe, indent=2, ensure_ascii=False))
+        if persist:
+            _persist_redacted(result, safe_findings)
         return
 
     _print_findings_table(result.findings, url)
 
     stats = result.stats
     rprint(f"\n[dim]Pages crawled: {result.pages_crawled} | Duration: {stats.get('duration_sec')}s | Errors: {len(result.errors)}[/dim]")
+
+    if persist:
+        _persist_redacted(result, safe_findings)
+
+
+def _persist_redacted(result: ScanResult, safe_findings: list[dict]) -> None:
+    """Helper to persist redacted findings from CLI."""
+    try:
+        storage.init_db_sync()
+        scan_id = f"cli-{int(time.time())}"
+        storage.save_redacted_scan_sync(
+            scan_id=scan_id,
+            target=result.target,
+            started_at=result.started_at,
+            finished_at=result.finished_at or time.time(),
+            pages_crawled=result.pages_crawled,
+            safe_findings=safe_findings,
+        )
+        rprint(f"[green]✓ Redacted findings persisted to DB (scan_id={scan_id}).[/green]")
+        rprint("[dim]Open the web dashboard (/dashboard) or use the web UI to browse the collection by category.[/dim]")
+    except Exception as e:
+        rprint(f"[red]Failed to persist to DB: {e}[/red]")
 
 
 @app.command()

@@ -242,6 +242,21 @@ def find_secrets_in_text(text: str, source_url: str) -> list[Finding]:
 
     return findings
 
+
+def findings_to_safe_dicts(findings: list[Finding]) -> list[dict]:
+    """
+    Convert Finding objects to plain dicts with raw 'value' removed.
+    This is the only safe form that should ever be persisted or returned via API/UI.
+
+    Raw secrets must never be written to disk, logs, or databases in this project.
+    """
+    safe = []
+    for f in findings:
+        d = f.model_dump()
+        d.pop("value", None)  # CRITICAL: strip the actual secret
+        safe.append(d)
+    return safe
+
 # ---------------------------
 # Crawler
 # ---------------------------

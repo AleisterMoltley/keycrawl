@@ -23,6 +23,9 @@ pip install -r requirements.txt
 # 2. CLI scan (recommended for one-offs)
 python -m keycrawl scan https://target.example.com --depth 1 --max-pages 30
 
+# Persist redacted findings to the shared collection DB (powers /dashboard)
+python -m keycrawl scan https://target.example.com --depth 1 --max-pages 30 --persist
+
 # JSON output (for piping / automation)
 python -m keycrawl scan https://target.example.com --json > findings.json
 
@@ -126,6 +129,8 @@ keycrawl/
 
 Run a few scans, then visit `/dashboard` (or click the button in the main UI).
 
+**All discovered (redacted) secrets are now collected in one place**, whether you scan via the web UI or the CLI.
+
 Features:
 - **All discovered secrets are collected** into a local SQLite file (`findings.db`).
 - Grouped **by category** (`secret_type`): AWS keys, GitHub tokens, Solana Private Key, PEM Private Keys, High Entropy, JWTs, etc.
@@ -133,6 +138,14 @@ Features:
 - Search across URL + context.
 - High-risk categories (anything with "Private Key", "Solana", "PEM", "SSH") are visually highlighted in red.
 - Everything shown is **redacted**. Raw secret material is **never** written to the database or returned by the API.
+
+### CLI can also contribute to the collection
+
+```bash
+python -m keycrawl scan https://your-site.example --persist
+```
+
+This writes the redacted findings into the same DB that the web dashboard reads. Use this when you want a unified view of everything you have found across multiple scans / tools.
 
 Start the server, scan a couple of targets, then open http://localhost:8080/dashboard.
 
