@@ -1,0 +1,14 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 8
+numReplicas = 1
+
+# Recommended: deploy as a "Web Service" in Railway.
+# After first deploy, you can also trigger one-off scans via:
+#   railway run python -m keycrawl scan https://target.com --depth 1 --max-pages 20
