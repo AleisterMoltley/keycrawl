@@ -365,11 +365,22 @@ DASHBOARD_HTML = """<!doctype html>
         <a href="/" class="text-emerald-400 hover:underline">&larr; Back to Scanner</a>
         <h1 class="text-3xl font-semibold tracking-tighter mt-1">Collection Dashboard</h1>
         <p class="text-zinc-400 text-sm">Redacted collection of username/password + wallet private key leaks — for your own systems</p>
-        <div class="mt-2 text-xs bg-zinc-800 border border-zinc-700 rounded p-2">
-          <strong>Unredacted / raw values:</strong> Not stored in this collection (by design).<br>
-          • After a scan: raw values are shown in the live result.<br>
-          • CLI: use <code>--export-full</code> to append full raw data to your local <code>keycrawl-unredacted-archive.jsonl</code> (or set KEYCRAWL_UNREDACTED_ARCHIVE).<br>
-          • Web API for a live job: <code>/api/scan/&lt;job_id&gt;/full-export</code>
+
+        <div class="mt-3 mb-6 bg-yellow-900 border border-yellow-600 rounded-2xl p-4 text-sm">
+          <div class="font-semibold text-yellow-300 mb-2">Quick local unredacted export (one click from here)</div>
+          <div class="flex gap-2 mb-2">
+            <input id="quick-export-url" type="text" placeholder="https://your-site.example (your own site)" 
+                   class="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-yellow-500">
+            <button onclick="quickUnredactedExport()" 
+                    class="bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-black font-semibold px-4 py-2 rounded-xl text-sm whitespace-nowrap">
+              Scan &amp; Download Full Raw Locally
+            </button>
+          </div>
+          <div class="text-[10px] text-yellow-400">
+            Triggers a small scan → when done, automatically downloads the complete unredacted JSON (raw values) directly to your computer.<br>
+            This collection stays redacted. No CLI needed. The raw data is only for this scan (ephemeral on server).
+          </div>
+          <div id="quick-export-status" class="text-[10px] text-emerald-400 mt-1 hidden"></div>
         </div>
       </div>
       <div class="text-xs text-right text-zinc-500">
@@ -553,6 +564,87 @@ DASHBOARD_HTML = """<!doctype html>
       await loadCategories();
       await loadFindings();
       setupFilters();
+    }
+
+    // Quick one-click unredacted local export directly from dashboard
+    async function quickUnredactedExport() {
+      const input = document.getElementById('quick-export-url');
+      const status = document.getElementById('quick-export-status');
+      const url = input.value.trim();
+      if (!url) {
+        alert('Please enter a URL');
+        return;
+      }
+
+      status.classList.remove('hidden');
+      status.textContent = 'Starting scan...';
+      const btns = document.querySelectorAll('button');
+      btns.forEach(b => b.disabled = true);
+
+      try {
+        // Trigger scan (small limits for quick export)
+        const scanRes = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: url,
+            max_depth: 1,
+            max_pages: 15,
+            same_domain_only: true
+          })
+        });
+        const scanData = await scanRes.json();
+        const jobId = scanData.job_id;
+
+        status.textContent = `Scanning... (job ${jobId})`;
+
+        // Poll until done
+        let done = false;
+        let attempts = 0;
+        while (!done && attempts < 60) {
+          await new Promise(r => setTimeout(r, 1200));
+          const jobRes = await fetch(`/api/jobs/${jobId}`);
+          const job = await jobRes.json();
+          if (job.status === 'done') {
+            done = true;
+          } else if (job.status === 'error') {
+            throw new Error(job.error || 'Scan failed');
+          }
+          attempts++;
+          status.textContent = `Scanning... (${attempts})`;
+        }
+
+        if (!done) throw new Error('Scan timed out');
+
+        status.textContent = 'Downloading full raw...';
+
+        // Download the full unredacted
+        const exportRes = await fetch(`/api/scan/${jobId}/full-export`);
+        if (!exportRes.ok) throw new Error('Export failed');
+        const blob = await exportRes.blob();
+
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `keycrawl-full-raw-${jobId}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+
+        status.textContent = 'Download complete! (raw values saved locally)';
+        setTimeout(() => {
+          status.classList.add('hidden');
+          status.textContent = '';
+        }, 4000);
+
+      } catch (e) {
+        console.error(e);
+        status.textContent = 'Error: ' + e.message;
+        setTimeout(() => { status.classList.add('hidden'); }, 6000);
+      } finally {
+        btns.forEach(b => b.disabled = false);
+      }
     }
 
     window.onload = initDashboard;
