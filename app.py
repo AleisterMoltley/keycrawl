@@ -88,20 +88,24 @@ async def _run_scan_job(job_id: str, req: ScanRequest) -> None:
                 concurrency=5,
                 request_delay=0.18,
             )
-            # Strip raw values for safety in the web UI / API
-            safe_findings = []
-            for f in result.findings:
-                d = f.model_dump()
-                d.pop("value", None)
-                safe_findings.append(d)
-
             started_at = JOBS[job_id].get("started_at") or result.started_at
             finished_at = time.time()
+
+            # For the *current scan result* (ephemeral, only visible to the person who just ran this scan):
+            # we include the raw value so the operator can see exactly what was found.
+            # WARNING: This is only in-memory for this job. It is not persisted.
+            full_findings = []
+            for f in result.findings:
+                d = f.model_dump()
+                full_findings.append(d)  # includes 'value' for the live result only
+
+            # Always strip for the persistent collection
+            safe_findings = findings_to_safe_dicts(result.findings)
 
             done_result = {
                 "target": result.target,
                 "pages_crawled": result.pages_crawled,
-                "findings": safe_findings,
+                "findings": full_findings,   # live result has raw for the operator
                 "stats": result.stats,
                 "errors": result.errors,
                 "started_at": started_at,
@@ -115,7 +119,8 @@ async def _run_scan_job(job_id: str, req: ScanRequest) -> None:
                 }
             )
 
-            # Persist redacted findings to the shared collection (dashboard DB)
+            # Persist ONLY redacted findings to the shared collection (dashboard DB)
+            # Raw values are never written to the permanent collection.
             try:
                 await storage.save_scan_result(
                     scan_id=job_id,
@@ -256,12 +261,18 @@ RESULT_PARTIAL = """
   </div>
 
   {% if findings %}
+  <div class="bg-red-950 border border-red-900 rounded-xl p-3 mb-4 text-xs text-red-200">
+    <strong>⚠️ LIVE SCAN RESULT — RAW SECRETS VISIBLE HERE</strong><br>
+    These values are only shown for the scan you just triggered (in-memory only).<br>
+    They are <strong>NOT</strong> saved to the permanent collection or dashboard.<br>
+    The collection (/dashboard) only ever stores redacted versions.
+  </div>
   <div class="space-y-3">
     {% for f in findings %}
     <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-sm">
       <div class="flex items-center gap-2 mb-1">
         <span class="px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 text-xs font-medium">{{ f.secret_type }}</span>
-        <span class="font-mono text-amber-300 secret">{{ f.value_redacted }}</span>
+        <span class="font-mono text-red-400 secret break-all">VALUE: {{ f.value or f.value_redacted }}</span>
       </div>
       <div class="text-zinc-400 text-xs mb-1">{{ f.url }}</div>
       <div class="finding text-zinc-400 text-xs break-all">{{ f.context }}</div>
@@ -327,8 +338,12 @@ DASHBOARD_HTML = """<!doctype html>
     <div class="bg-red-950 border border-red-900 rounded-2xl p-5 mb-8 text-sm">
       <div class="font-semibold text-red-400 mb-2 text-base">⚠️ CRITICAL LEGAL WARNING — READ CAREFULLY</div>
       <p class="text-red-200">
-        This dashboard only stores <strong>redacted</strong> representations of secrets found during authorized scans.
-        <strong>Private keys (especially Solana wallet private keys) that appear here mean the wallet is fully compromised.</strong>
+        <strong>THIS COLLECTION (DASHBOARD) ONLY STORES REDACTED VERSIONS.</strong><br>
+        Raw secret values are <strong>never</strong> written to the persistent database or shown in the historical collection.
+        They are only visible in the live result of a scan you just triggered (ephemeral in-memory only).
+      </p>
+      <p class="text-red-200 mt-2">
+        Private keys (especially Solana wallet private keys) that appear here (even redacted) mean the wallet is fully compromised.
       </p>
       <ul class="list-disc ml-5 mt-2 text-red-300 text-xs space-y-0.5">
         <li>Discovery of a private key via web scanning almost always indicates a leak or misconfiguration on the scanned site.</li>

@@ -30,31 +30,40 @@ app = typer.Typer(
 console = Console()
 
 
-def _print_findings_table(findings: list, url: str) -> None:
+def _print_findings_table(findings: list, url: str, show_raw: bool = False) -> None:
     if not findings:
         rprint("[green]No secrets found.[/green]")
         return
 
-    table = Table(title=f"Findings for {url}", show_lines=True)
+    title = f"Findings for {url}"
+    if show_raw:
+        title += "  [RAW SECRETS VISIBLE]"
+
+    table = Table(title=title, show_lines=True)
     table.add_column("#", style="dim", width=3)
     table.add_column("Type", style="cyan", no_wrap=True)
-    table.add_column("Redacted Value", style="yellow")
+    value_col = "RAW VALUE (SECRET)" if show_raw else "Redacted Value"
+    table.add_column(value_col, style="yellow" if not show_raw else "red")
     table.add_column("URL", style="blue", overflow="fold")
     table.add_column("Context", style="white", overflow="fold")
     table.add_column("Entropy", justify="right", style="magenta")
 
     for i, f in enumerate(findings, 1):
+        val = f.value if show_raw else f.value_redacted
         table.add_row(
             str(i),
             f.secret_type,
-            f.value_redacted,
+            val,
             f.url,
             f.context[:120] + ("…" if len(f.context) > 120 else ""),
             f"{f.entropy:.2f}" if f.entropy else "-",
         )
     console.print(table)
     rprint(f"\n[bold red]Total findings: {len(findings)}[/bold red]")
-    rprint("[dim]WARNING: Treat any real findings as sensitive. Do not commit or share raw values.[/dim]")
+    if show_raw:
+        rprint("[bold red]These are the ACTUAL secret values. Do not save this output. Do not share the terminal.[/bold red]")
+    else:
+        rprint("[dim]WARNING: Treat any real findings as sensitive. Do not commit or share raw values.[/dim]")
 
 
 @app.command()
@@ -74,11 +83,23 @@ def scan(
         help="Persist redacted findings to the shared collection database (findings.db). "
              "Raw secret values are NEVER stored — only redacted versions + metadata.",
     ),
+    show_raw: bool = typer.Option(
+        False,
+        "--show-raw",
+        "--full",
+        help="Show the FULL raw secret values in the output table for this scan only. "
+             "WARNING: This prints actual secrets to your terminal. Use only when scanning your own controlled test data. "
+             "Never use on production or untrusted sites. Raw values are not saved anywhere by this tool.",
+    ),
 ):
     """Crawl a site and hunt for secrets.
 
     Use --persist to add the (redacted) findings to the persistent collection
     that is also shown in the web dashboard at /dashboard.
+
+    Use --show-raw if you need to see the exact secret value in the current run's output
+    (e.g. when testing on your own sites with planted test keys). This only affects the live output.
+    The persistent collection (--persist / dashboard) ALWAYS uses redacted values only.
     """
     rprint(f"[bold]KeyCrawl[/bold] → scanning [blue]{url}[/blue] (depth={depth}, max_pages={max_pages})")
 
@@ -117,7 +138,13 @@ def scan(
             _persist_redacted(result, safe_findings)
         return
 
-    _print_findings_table(result.findings, url)
+    if show_raw:
+        rprint("\n[bold red]!!! --show-raw ENABLED !!![/bold red]")
+        rprint("[bold red]You are about to see ACTUAL SECRET VALUES in the output.[/bold red]")
+        rprint("[red]Only use this on sites and keys you fully control. These values can be used to steal funds or access services.[/red]")
+        rprint("[red]This tool will not save them anywhere. The persistent collection always stays redacted.[/red]\n")
+
+    _print_findings_table(result.findings, url, show_raw=show_raw)
 
     stats = result.stats
     rprint(f"\n[dim]Pages crawled: {result.pages_crawled} | Duration: {stats.get('duration_sec')}s | Errors: {len(result.errors)}[/dim]")
