@@ -17,6 +17,7 @@ tldextract>=5.1.2
 
 # Data
 pydantic>=2.7.1
+python-multipart>=0.0.9   # required by FastAPI for form data in web UI
 
 # Optional but useful for future verification
 # shodan>=1.31.0
