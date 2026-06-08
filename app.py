@@ -618,21 +618,47 @@ DASHBOARD_HTML = """<!doctype html>
 
         status.textContent = 'Downloading full raw...';
 
-        // Download the full unredacted
+        // Get full data, then filter to ONLY wallet private keys and download as clean text
         const exportRes = await fetch(`/api/scan/${jobId}/full-export`);
         if (!exportRes.ok) throw new Error('Export failed');
-        const blob = await exportRes.blob();
+        const fullData = await exportRes.json();
 
+        const walletTypes = [
+            "Solana Private Key",
+            "Solana Private Key (raw base58)",
+            "Ethereum / EVM Private Key",
+            "Wallet Mnemonic / Seed Phrase",
+            "Wallet Private Key"
+        ];
+
+        const lines = [];
+        for (const f of (fullData.findings || [])) {
+            const stype = f.secret_type || "";
+            if (walletTypes.some(wt => stype.includes(wt))) {
+                const raw = f.raw_value || f.value;
+                if (raw && raw.length > 20) {
+                    lines.push(raw);
+                }
+            }
+        }
+
+        if (lines.length === 0) {
+            status.textContent = 'No wallet private keys found in this scan.';
+            return;
+        }
+
+        const text = lines.join('\n') + '\n';
+        const blob = new Blob([text], { type: 'text/plain' });
         const downloadUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = `keycrawl-full-raw-${jobId}.json`;
+        a.download = `wallet-keys-${jobId}.txt`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(downloadUrl);
 
-        status.textContent = 'Download complete! (raw values saved locally)';
+        status.textContent = `Download complete! ${lines.length} unredacted wallet key(s) saved locally.`;
         setTimeout(() => {
           status.classList.add('hidden');
           status.textContent = '';

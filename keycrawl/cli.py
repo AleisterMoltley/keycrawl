@@ -331,25 +331,30 @@ def export_wallet_keys(
         "keycrawl-unredacted-archive.jsonl",
         "--archive",
         "-a",
-        help="Path to your unredacted archive JSONL (populated by --export-full). Can also use KEYCRAWL_UNREDACTED_ARCHIVE env.",
+        help="Path to your unredacted archive JSONL (from --export-full) or a single full-raw JSON from the dashboard button. Defaults to env KEYCRAWL_UNREDACTED_ARCHIVE if set.",
     ),
     output: str = typer.Option(
         "wallet-keys.txt",
         "--output",
         "-o",
-        help="Output file for the clean, readable list of unredacted wallet keys.",
+        help="Output file for the clean, readable list of unredacted wallet keys only.",
     ),
     append: bool = typer.Option(
         False,
         "--append",
-        help="Append to the output file instead of overwriting (adds a separator with timestamp).",
+        help="Append to existing output file (with timestamp separator).",
+    ),
+    bare: bool = typer.Option(
+        True,
+        "--bare/--header",
+        help="Output ONLY the raw keys (one per line). Use --header to add a small comment header.",
     ),
 ):
-    """Extract ONLY unredacted wallet private keys (Solana, Ethereum, mnemonics/seeds etc.)
-    from your local archive into a clean, human-readable text file.
+    """Create a clean, human-readable text file containing **only** the unredacted wallet private keys
+    (Solana, Ethereum/EVM, mnemonics/seeds etc.) from your scans.
 
-    This gives you exactly what you asked for: one simple file with only the wallet keys, full unredacted,
-    nicely formatted with source info so you know where they came from.
+    This is the dedicated command for exactly what you want: one simple file, only wallet keys,
+    full raw values, nicely formatted with source.
     """
     import json
     import os
@@ -358,11 +363,11 @@ def export_wallet_keys(
     archive_path = os.getenv("KEYCRAWL_UNREDACTED_ARCHIVE", archive)
 
     if not os.path.exists(archive_path):
-        rprint(f"[red]Archive not found: {archive_path}[/red]")
-        rprint("Use --export-full on scans first to populate it with raw data.")
+        rprint(f"[red]File not found: {archive_path}[/red]")
+        rprint("First populate data with --export-full (CLI) or the dashboard 'Scan & Download Full Raw' button.")
         return
 
-    # Wallet key types we care about (from our focused patterns)
+    # Wallet key types (from our focused scanner)
     wallet_types = [
         "Solana Private Key",
         "Solana Private Key (raw base58)",
@@ -373,58 +378,88 @@ def export_wallet_keys(
 
     keys = []
     with open(archive_path, "r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except Exception:
-                continue
+        content = fp.read().strip()
 
-            for f in rec.get("findings", []):
-                stype = f.get("secret_type", "")
-                if any(wt in stype for wt in wallet_types):
-                    raw = f.get("raw_value") or f.get("value")
-                    if raw:
-                        keys.append({
-                            "type": stype,
-                            "url": f.get("url", ""),
-                            "raw": raw,
-                            "context": f.get("context", ""),
-                            "exported_at": rec.get("exported_at", ""),
-                        })
-
-    if not keys:
-        rprint("[yellow]No wallet private keys found in the archive.[/yellow]")
+    if not content:
+        rprint("[yellow]File is empty.[/yellow]")
         return
 
+    try:
+        data = json.loads(content)
+        # Single full-export JSON (from dashboard button or one --export-full record)
+        if isinstance(data, dict) and "findings" in data:
+            recs = [data]
+        else:
+            # Assume JSONL (multiple lines)
+            recs = []
+            for line in content.splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        recs.append(json.loads(line))
+                    except Exception:
+                        pass
+    except Exception:
+        # Fallback: treat as JSONL
+        recs = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    recs.append(json.loads(line))
+                except Exception:
+                    pass
+
+    for rec in recs:
+        for f in rec.get("findings", []):
+            stype = f.get("secret_type", "")
+            if any(wt in stype for wt in wallet_types):
+                raw = f.get("raw_value") or f.get("value")
+                if raw and len(raw) > 20:  # basic sanity filter against tiny false positives
+                    keys.append({
+                        "type": stype,
+                        "url": f.get("url", ""),
+                        "raw": raw,
+                        "context": f.get("context", ""),
+                        "exported_at": rec.get("exported_at") or rec.get("finished_at") or "",
+                    })
+
+    if not keys:
+        rprint("[yellow]No wallet private keys found in the file.[/yellow]")
+        rprint("Make sure you used --export-full or the dashboard full-raw export on sites that actually leaked keys.")
+        return
+
+    # Deduplicate while keeping order
+    seen = set()
+    unique_keys = []
+    for k in keys:
+        if k["raw"] not in seen:
+            seen.add(k["raw"])
+            unique_keys.append(k["raw"])
+
     mode = "a" if append else "w"
-    header = not append or not os.path.exists(output)
-
     with open(output, mode, encoding="utf-8") as fp:
-        if header:
-            fp.write(f"# Wallet Keys Export (unredacted)\n")
-            fp.write(f"# Generated: {datetime.now().isoformat()}\n")
-            fp.write(f"# Source archive: {archive_path}\n")
-            fp.write(f"# Only wallet private keys (Solana, ETH, seeds etc.)\n\n")
+        if bare:
+            # completely minimal: just the keys
+            for raw in unique_keys:
+                fp.write(raw + "\n")
+        else:
+            if not append or not os.path.exists(output) or os.path.getsize(output) == 0:
+                fp.write("# Unredacted Wallet Private Keys (only)\n")
+                fp.write(f"# Generated: {datetime.now().isoformat()}\n")
+                fp.write(f"# Source: {archive_path}\n\n")
 
-        if append:
-            fp.write(f"\n# --- New export batch: {datetime.now().isoformat()} ---\n\n")
+            if append:
+                fp.write(f"\n# --- Added {datetime.now().isoformat()} ---\n")
 
-        for k in keys:
-            fp.write(f"=== {k['type']} ===\n")
-            fp.write(f"Source: {k['url']}\n")
-            if k['exported_at']:
-                fp.write(f"Found at: {k['exported_at']}\n")
-            fp.write(f"Key: {k['raw']}\n")
-            if k['context']:
-                fp.write(f"Context: {k['context']}\n")
-            fp.write("\n")
+            for raw in unique_keys:
+                fp.write(raw + "\n")
 
-    rprint(f"[green]✓ Wrote {len(keys)} wallet keys (unredacted) to {output}[/green]")
-    rprint("[yellow]This file contains real secrets. Secure it or delete after use.[/yellow]")
-    rprint("[dim]The tool's internal collection stays redacted.[/dim]")
+    if bare:
+        rprint(f"[green]✓ Wrote {len(unique_keys)} unique unredacted wallet key(s) (bare) to {output}[/green]")
+    else:
+        rprint(f"[green]✓ Wrote {len(unique_keys)} unique unredacted wallet key(s) to {output}[/green]")
+    rprint("[bold red]This file contains ONLY the raw wallet private keys. Keep it secure and delete after use![/bold red]")
 
 
 @app.command()
