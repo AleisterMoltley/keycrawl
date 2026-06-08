@@ -574,21 +574,26 @@ DASHBOARD_HTML = """<!doctype html>
 
     // Quick one-click unredacted local export directly from dashboard
     async function quickUnredactedExport() {
+      console.log('%c[KeyCrawl] quickUnredactedExport clicked', 'color: lime');
       const input = document.getElementById('quick-export-url');
       const status = document.getElementById('quick-export-status');
       if (!input || !status) {
-        alert('UI elements not found. Please reload the page.');
+        alert('UI elements not found. Hard refresh the page (Ctrl+Shift+R) and try again.');
         console.error('quick-export elements missing');
         return;
       }
       const url = input.value.trim();
       if (!url) {
-        alert('Please enter a target URL first');
+        alert('Please enter a target URL first (e.g. https://stableponzi.com)');
         return;
       }
 
+      // Force visible status immediately - even if hidden class or CSS issue
       status.classList.remove('hidden');
-      status.textContent = 'Starting scan...';
+      status.style.display = 'block';
+      status.style.visibility = 'visible';
+      status.style.opacity = '1';
+      status.textContent = 'Button clicked - preparing scan...';
       const allButtons = document.querySelectorAll('button');
       allButtons.forEach(b => b.disabled = true);
 
