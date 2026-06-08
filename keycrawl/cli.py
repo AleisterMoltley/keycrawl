@@ -24,7 +24,7 @@ from . import storage
 
 app = typer.Typer(
     name="keycrawl",
-    help="Scan websites for API keys, private keys, tokens and other secrets.",
+    help="Focused scanner: usernames/passwords + wallet private keys (Solana, EVM, mnemonics). For authorized testing of your own sites.",
     add_completion=False,
 )
 console = Console()
@@ -99,14 +99,15 @@ def scan(
              "The tool does NOT store these in any persistent collection or DB. You are responsible for securing/deleting the export file.",
     ),
 ):
-    """Crawl a site and hunt for secrets.
+    """Crawl a site and hunt for usernames/passwords + wallet private keys.
+
+    Focused mode (passwords, usernames, Solana/EVM private keys, mnemonics).
 
     Use --persist to add the (redacted) findings to the persistent collection
     that is also shown in the web dashboard at /dashboard.
 
-    Use --show-raw if you need to see the exact secret value in the current run's output
-    (e.g. when testing on your own sites with planted test keys). This only affects the live output.
-    The persistent collection (--persist / dashboard) ALWAYS uses redacted values only.
+    Use --show-raw or --export-full to get the actual secret values for the *current scan only*
+    (writes local file or shows in terminal). The persistent collection always stays redacted.
     """
     rprint(f"[bold]KeyCrawl[/bold] → scanning [blue]{url}[/blue] (depth={depth}, max_pages={max_pages})")
 
@@ -236,7 +237,7 @@ def _export_full_scan(result: ScanResult) -> None:
 
 @app.command()
 def patterns():
-    """List all built-in secret detection patterns."""
+    """List the focused detection patterns (usernames/passwords + wallet private keys)."""
     from .scanner import PATTERNS
 
     table = Table(title="KeyCrawl Built-in Patterns")
@@ -255,7 +256,7 @@ def patterns():
 def check(
     text: str = typer.Argument(..., help="Raw text/blob to test against the secret finders (for debugging)"),
 ):
-    """Quickly test the secret finders against a piece of text (no network)."""
+    """Quickly test the focused credential/wallet-key finders against a piece of text (no network)."""
     findings = find_secrets_in_text(text, source_url="local:input")
     if not findings:
         rprint("[green]No secrets detected in the provided text.[/green]")

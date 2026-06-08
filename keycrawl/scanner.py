@@ -1,13 +1,13 @@
 """
-KeyCrawl - Web secrets scanner core.
+KeyCrawl - Focused credential and wallet key leak scanner.
 
-Crawls websites (same-domain by default) and extracts potential:
-- API keys / tokens
-- Private keys (PEM, OpenSSH, etc.)
-- High-entropy strings (unknown secrets)
-- JWTs, AWS, GitHub, Slack, Stripe, etc.
+Crawls websites and extracts:
+- Usernames / emails + passwords (credential pairs)
+- Wallet private keys (Solana, Ethereum/EVM, mnemonics/seeds, etc.)
 
-Designed to be fast, polite, and low on false positives.
+Intentionally limited scope to reduce noise from generic API keys, tokens, etc.
+Only for authorized security testing on systems you own or have explicit permission for.
+Raw secrets are only shown in live per-scan output or local exports — never persisted in the collection DB.
 """
 
 from __future__ import annotations
@@ -54,45 +54,26 @@ class ScanResult(BaseModel):
 # Each: (name, regex, flags, description, is_multiline)
 # We compile at load time.
 PATTERNS: list[tuple[str, str, int, str, bool]] = [
-    # AWS
-    ("AWS Access Key ID", r"AKIA[0-9A-Z]{16}", 0, "AWS IAM access key", False),
-    ("AWS Secret Access Key", r"(?i)aws(.{0,20})?['\"]?([0-9a-zA-Z/+]{40})['\"]?", 0, "AWS secret (approx)", False),
-    # Google / Firebase
-    ("Google API Key", r"AIza[0-9A-Za-z\-_]{35}", 0, "Google API key", False),
-    ("Firebase URL", r"https://[a-z0-9-]+\.firebaseio\.com", 0, "Firebase realtime DB", False),
-    # GitHub
-    ("GitHub Token", r"ghp_[0-9a-zA-Z]{36}", 0, "GitHub personal access token", False),
-    ("GitHub OAuth", r"gho_[0-9a-zA-Z]{36}", 0, "GitHub OAuth token", False),
-    ("GitHub App Token", r"(ghu|ghs)_[0-9a-zA-Z]{36}", 0, "GitHub app/installation token", False),
-    # Slack
-    ("Slack Bot Token", r"xoxb-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,32}", 0, "Slack bot token", False),
-    ("Slack User Token", r"xoxp-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,32}", 0, "Slack user token", False),
-    ("Slack Webhook", r"https://hooks\.slack\.com/services/T[a-zA-Z0-9_]{8,10}/B[a-zA-Z0-9_]{8,10}/[a-zA-Z0-9_]{24}", 0, "Slack incoming webhook", False),
-    # Stripe
-    ("Stripe Secret Key", r"sk_live_[0-9a-zA-Z]{24,}", 0, "Stripe live secret", False),
-    ("Stripe Publishable Key", r"pk_live_[0-9a-zA-Z]{24,}", 0, "Stripe live publishable", False),
-    # Generic service tokens (common)
-    ("Twilio API Key", r"SK[0-9a-fA-F]{32}", 0, "Twilio API key", False),
-    ("SendGrid API Key", r"SG\.[a-zA-Z0-9_-]{22,}\.[a-zA-Z0-9_-]{43,}", 0, "SendGrid API key", False),
-    ("Heroku API Key", r"(?i)heroku.{0,20}?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", 0, "Heroku API key", False),
-    # JWT
-    ("JWT", r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}", 0, "JSON Web Token (JWT)", False),
-    # Private keys (multi-line possible)
-    ("Private Key (PEM/OpenSSH)", r"-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP |ENCRYPTED |PRIVATE )?PRIVATE KEY(?: BLOCK)?-----[\s\S]{20,}?-----END (?:RSA |DSA |EC |OPENSSH |PGP |ENCRYPTED |PRIVATE )?KEY(?: BLOCK)?-----", re.DOTALL, "Private key material", True),
-    ("SSH Private Key (old)", r"-----BEGIN SSH2 ENCRYPTED PRIVATE KEY-----[\s\S]{20,}?-----END SSH2 ENCRYPTED PRIVATE KEY-----", re.DOTALL, "SSH2 private key", True),
-    # Generic "key = value" with high entropy (catch-all, filtered)
-    ("Generic API Key / Secret", r"(?i)(?:api[_-]?key|secret[_-]?key|private[_-]?key|auth[_-]?token|access[_-]?token|api[_-]?secret|client[_-]?secret)\s*[:=]\s*['\"]?([a-zA-Z0-9_\-\.\/+=~]{16,})['\"]?", 0, "Generic key=... assignment", False),
-    # Authorization header bearer / basic with long token
-    ("Bearer Token", r"(?i)authorization:\s*bearer\s+([a-zA-Z0-9_\-\.]{20,})", 0, "Bearer token in headers/text", False),
-    # Solana wallet private keys (leaked on websites = instant compromise)
-    # These are almost always 88-char base58 (64-byte secret key = secret32 + pub32).
-    #
-    # >>> DETECTION + LEAK REPORTING / SECURITY RESEARCH ONLY <<<
-    # This software contains ZERO functionality to load these keys, sign transactions,
-    # or transfer any assets. Requests to add "auto send everything to address X" or
-    # any wallet-draining logic are refused. Such actions are criminal theft.
-    ("Solana Private Key", r"(?i)(?:solana|phantom|solflare|keypair|secret.?key|private.?key).*?['\"]?([1-9A-HJ-NP-Za-km-z]{86,90})['\"]?", 0, "Solana wallet private key (base58)", False),
-    ("Solana Private Key (raw base58)", r"['\"]?([1-9A-HJ-NP-Za-km-z]{87,88})['\"]?", 0, "Raw 88-char base58 (possible Solana secret key)", False),
+    # === Usernames / Emails (in credential contexts) ===
+    ("Username / Email", r"(?i)(?:user(?:name)?|login|e-?mail|account|uid)\s*[:=]\s*['\"]?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9_.-]{3,32})['\"]?", 0, "Username or email address", False),
+
+    # === Passwords / Secrets (credential values) ===
+    ("Password", r"(?i)(?:pass(?:word)?|pwd|passphrase|secret)\s*[:=]\s*['\"]?([^'\"\s]{6,64})['\"]?", 0, "Password or secret value", False),
+    ("Generic Credential Pair", r"(?i)(?:user|login|email)\s*[:=]\s*['\"]?([^'\"]+)['\"]?\s*[,;]?\s*(?:pass|pwd|secret)\s*[:=]\s*['\"]?([^'\"]+)['\"]?", 0, "Username + password pair (approx)", False),
+
+    # === Wallet Private Keys (focused scope) ===
+    # Solana (very common in web leaks: base58 64-byte secret)
+    ("Solana Private Key", r"(?i)(?:solana|phantom|solflare|keypair|priv(?:ate)?[-_ ]?key|seed).*?['\"]?([1-9A-HJ-NP-Za-km-z]{86,90})['\"]?", 0, "Solana wallet private key (base58)", False),
+    ("Solana Raw Private Key", r"['\"]?([1-9A-HJ-NP-Za-km-z]{87,88})['\"]?", 0, "Raw 88-char base58 Solana private key", False),
+
+    # Ethereum / EVM-style private keys
+    ("Ethereum / EVM Private Key", r"0x[0-9a-fA-F]{64}", 0, "Ethereum/EVM private key (64 hex)", False),
+
+    # Wallet mnemonics / seed phrases (BIP39 etc.)
+    ("Wallet Mnemonic / Seed Phrase", r"(?i)(?:mnemonic|seed(?:phrase)?|recovery[-_ ]?phrase|secret[-_ ]?phrase)\s*[:=]\s*['\"]?((?:[a-z]{3,}\s+){11,23}[a-z]{3,})['\"]?", 0, "BIP39 / wallet seed mnemonic", False),
+
+    # Generic wallet private key assignments (catches many chains)
+    ("Wallet Private Key", r"(?i)(?:wallet[-_ ]?priv(?:ate)?[-_ ]?key|priv(?:ate)?[-_ ]?key|secret[-_ ]?key)\s*[:=]\s*['\"]?([0-9a-zA-Z]{32,})['\"]?", 0, "Generic wallet private key assignment", False),
 ]
 
 COMPILED_PATTERNS: list[tuple[str, re.Pattern, str, bool]] = []
@@ -206,39 +187,10 @@ def find_secrets_in_text(text: str, source_url: str) -> list[Finding]:
                 )
             )
 
-    # 2. High-entropy raw tokens (catch unknown ones)
-    for m in RAW_TOKEN_RE.finditer(text):
-        raw = m.group(1)
-        if len(raw) < 32 or len(raw) > 256:
-            continue
-        if is_likely_noise(raw):
-            continue
-        ent = shannon_entropy(raw)
-        if ent < 4.2:  # too low entropy for a secret
-            continue
-
-        # Skip if it looks like a normal long word / hash in JS (heuristic)
-        if re.search(r"[a-f0-9]{64}", raw) and ent < 4.8:  # long hex often not secret
-            continue
-
-        red = redact_value(raw, "HighEntropy")
-        key = ("HighEntropy", red)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        ctx = extract_context(text, m.start(1), m.end(1))
-        findings.append(
-            Finding(
-                url=source_url,
-                secret_type="High Entropy String",
-                value=raw,
-                value_redacted=red,
-                context=ctx,
-                entropy=round(ent, 2),
-                pattern_name="HighEntropy",
-            )
-        )
+    # High-entropy catch-all is disabled in this focused build.
+    # We rely on the explicit credential + wallet private key patterns above
+    # to avoid the previous noise from generic API keys / random strings.
+    # If you need broader detection later, it can be re-enabled.
 
     return findings
 

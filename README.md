@@ -1,18 +1,23 @@
 # keycrawl
 
-**Website secrets scanner.** Crawls pages (HTML + inline JS + comments) and detects:
+**Focused credential + wallet key leak scanner.**
 
-- API keys & tokens (AWS, Google, GitHub, Slack, Stripe, Twilio, SendGrid, Heroku, …)
-- Private keys (RSA, OpenSSH, EC, PGP, etc.)
-- JWTs
-- High-entropy strings (unknown but suspicious secrets)
-- Generic `api_key = "..."` style assignments
+Crawls pages (HTML + inline JS + comments) and detects **only**:
 
-Designed for **authorized security testing**, bug bounties, and red team / defensive work.
+- Usernames / emails + passwords (credential pairs)
+- Wallet private keys (Solana base58, Ethereum/EVM 0x..., BIP39 mnemonics/seeds, generic wallet privkeys)
+
+The scope is deliberately limited to reduce noise from generic API keys, service tokens, JWTs, etc.
+
+Designed for **authorized testing of your own systems** (e.g. your Railway deploys, web apps). 
+
+**Important safety note**: The persistent collection (`/dashboard`) stores only **redacted** versions + context. Full raw values are available only in live scan output or via per-scan local exports (`--export-full`). Never use this to collect secrets from systems you do not own.
 
 > ⚠️ **Legal notice**: Only scan assets you own or have explicit written permission for. Finding real credentials is a serious matter. The tool and its authors accept no responsibility for misuse.
 
 ## Quick start (local)
+
+The scanner is now focused on credentials and wallet keys only. This greatly reduces irrelevant findings.
 
 ```bash
 # 1. Clone + env
@@ -29,7 +34,7 @@ python -m keycrawl scan https://target.example.com --depth 1 --max-pages 30 --pe
 # JSON output (for piping / automation)
 python -m keycrawl scan https://target.example.com --json > findings.json
 
-# List patterns
+# List the focused patterns (credentials + wallet keys)
 python -m keycrawl patterns
 
 # Test the detection engine on a string (no network)
@@ -125,11 +130,11 @@ keycrawl/
 └── README.md
 ```
 
-## Collection Dashboard (new in v0.2)
+## Collection Dashboard (redacted leak registry)
 
-Run a few scans, then visit `/dashboard` (or click the button in the main UI).
+Run scans (focused on credentials + wallet keys), then visit `/dashboard` (or click the button in the main UI).
 
-**All discovered (redacted) secrets are now collected in one place**, whether you scan via the web UI or the CLI.
+The dashboard collects **redacted** findings + context from all scans (CLI with `--persist` or web). It is a registry of *where* leaks were found, not a store of the secrets themselves.
 
 Features:
 - **All discovered secrets are collected** into a local SQLite file (`findings.db`).
@@ -177,18 +182,20 @@ The dashboard exists purely for **visibility and responsible security research /
 
 ## Getting full (unredacted) data for your own scans
 
-If you are scanning your own controlled systems and need the complete raw values for a specific scan (e.g. to review in your private archive):
+Since the scanner is now limited to passwords/usernames + wallet private keys, you will mostly see relevant findings.
+
+For the actual secret values during your own controlled scans:
 
 - **CLI**: `python -m keycrawl scan https://your-own-site.example --export-full`
-  This writes a local JSON file containing the full findings (including raw secrets) + a big warning header. The file is **not** stored by the tool.
+  Writes a local JSON with the **full raw findings** (plus strong warnings). Not stored by the tool.
 
-- **CLI live view**: `--show-raw` shows raw values in the terminal output for that run only.
+- **CLI**: `--show-raw` to see raw values directly in the table output for this run.
 
-- **Web UI**: After running a scan, the live result page shows the raw values. You can also call `/api/scan/<job_id>/full-export` (while the job is fresh in memory) to download a JSON with everything for that one scan.
+- **Web**: Live result after a scan shows the raw values. Use `/api/scan/<job_id>/full-export` for a downloadable JSON of that scan's full data (available only while the job is in memory).
 
-**Important**: The persistent collection (`/dashboard`, the DB, `--persist`) **never** receives or displays raw secret values. This is by design for security. Found secrets (especially private keys) should be rotated immediately, not archived as plaintext by the scanner.
+The `/dashboard` collection and persistent DB always stay **redacted-only** + context. This is intentional.
 
-If you need an "archive" of leak locations from your own projects, the redacted + full context + URL in the dashboard is the safe and sufficient record.
+**Best practice**: When you find real wallet private keys or passwords, rotate them immediately. Do not rely on long-term archiving of the raw values.
 
 ## Future ideas (contributions welcome)
 

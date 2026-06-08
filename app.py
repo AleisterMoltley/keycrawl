@@ -41,8 +41,8 @@ get_high_risk_findings = storage.get_high_risk_findings
 
 app = FastAPI(
     title="KeyCrawl",
-    description="Scan websites for leaked API keys, private keys, tokens and high-entropy secrets. Collection dashboard for authorized security research.",
-    version="0.2.0",
+    description="Focused scanner for usernames/passwords and wallet private keys (Solana, Ethereum, mnemonics). Collection dashboard (redacted) for authorized leak detection on your own systems.",
+    version="0.3.0",
 )
 
 @app.on_event("startup")
@@ -151,7 +151,7 @@ INDEX_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KeyCrawl • Web Secrets Scanner</title>
+  <title>KeyCrawl • Credential + Wallet Key Scanner</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>
   <style>
@@ -166,7 +166,7 @@ INDEX_HTML = """<!doctype html>
       <div class="flex items-center gap-4">
         <div>
           <h1 class="text-4xl font-semibold tracking-tighter">keycrawl</h1>
-          <p class="text-zinc-400 text-sm mt-1">Website Secrets Scanner — API Keys • Private Keys • Tokens</p>
+          <p class="text-zinc-400 text-sm mt-1">Focused on usernames/passwords + wallet private keys (Solana, EVM, seeds). For your own controlled sites only.</p>
         </div>
         <a href="/dashboard"
            class="ml-4 px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-sm font-medium border border-zinc-700">📊 Collection Dashboard</a>
@@ -311,7 +311,7 @@ DASHBOARD_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KeyCrawl • Dashboard (Collected Secrets)</title>
+  <title>KeyCrawl • Dashboard (Credential &amp; Wallet Key Leaks)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -327,7 +327,7 @@ DASHBOARD_HTML = """<!doctype html>
       <div>
         <a href="/" class="text-emerald-400 hover:underline">&larr; Back to Scanner</a>
         <h1 class="text-3xl font-semibold tracking-tighter mt-1">Collection Dashboard</h1>
-        <p class="text-zinc-400 text-sm">All discovered secrets (redacted) — categorized for analysis</p>
+        <p class="text-zinc-400 text-sm">Redacted collection of username/password + wallet private key leaks — for your own systems</p>
       </div>
       <div class="text-xs text-right text-zinc-500">
         Data lives in <span class="font-mono">findings.db</span><br>
