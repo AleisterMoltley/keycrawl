@@ -84,6 +84,15 @@ PATTERNS: list[tuple[str, str, int, str, bool]] = [
     ("Generic API Key / Secret", r"(?i)(?:api[_-]?key|secret[_-]?key|private[_-]?key|auth[_-]?token|access[_-]?token|api[_-]?secret|client[_-]?secret)\s*[:=]\s*['\"]?([a-zA-Z0-9_\-\.\/+=~]{16,})['\"]?", 0, "Generic key=... assignment", False),
     # Authorization header bearer / basic with long token
     ("Bearer Token", r"(?i)authorization:\s*bearer\s+([a-zA-Z0-9_\-\.]{20,})", 0, "Bearer token in headers/text", False),
+    # Solana wallet private keys (leaked on websites = instant compromise)
+    # These are almost always 88-char base58 (64-byte secret key = secret32 + pub32).
+    #
+    # >>> DETECTION + LEAK REPORTING / SECURITY RESEARCH ONLY <<<
+    # This software contains ZERO functionality to load these keys, sign transactions,
+    # or transfer any assets. Requests to add "auto send everything to address X" or
+    # any wallet-draining logic are refused. Such actions are criminal theft.
+    ("Solana Private Key", r"(?i)(?:solana|phantom|solflare|keypair|secret.?key|private.?key).*?['\"]?([1-9A-HJ-NP-Za-km-z]{86,90})['\"]?", 0, "Solana wallet private key (base58)", False),
+    ("Solana Private Key (raw base58)", r"['\"]?([1-9A-HJ-NP-Za-km-z]{87,88})['\"]?", 0, "Raw 88-char base58 (possible Solana secret key)", False),
 ]
 
 COMPILED_PATTERNS: list[tuple[str, re.Pattern, str, bool]] = []

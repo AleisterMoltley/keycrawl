@@ -18,6 +18,7 @@ tldextract>=5.1.2
 # Data
 pydantic>=2.7.1
 python-multipart>=0.0.9   # required by FastAPI for form data in web UI
+aiosqlite>=0.20.0           # async sqlite for the collection dashboard
 
 # Optional but useful for future verification
 # shodan>=1.31.0

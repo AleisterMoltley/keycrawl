@@ -11,22 +11,50 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import time
 import uuid
 from typing import Any
 
-from fastapi import FastAPI, BackgroundTasks, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+import aiosqlite
+from fastapi import FastAPI, BackgroundTasks, Form
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from keycrawl.scanner import crawl_and_scan, ScanResult
 
+# ------------------------------------------------------------------
+# PERSISTENT STORAGE (redacted findings ONLY - never store raw secrets)
+# ------------------------------------------------------------------
+DB_PATH = os.getenv("KEYCRAWL_DB", "findings.db")
+
+# WARNING: This tool is for authorized security research and leak detection.
+# Storing discovered private keys (even redacted) must be handled with extreme care.
+# The following functionality deliberately does NOT and WILL NEVER contain:
+# - Loading of private keys
+# - Construction of Solana (or any other) transactions
+# - Automatic or manual "draining", "sweeping", or sending of funds/tokens
+# - Any interaction with wallets using discovered secrets
+#
+# If a Solana (or any) private key is discovered during a scan, it means the
+# corresponding wallet is compromised. The only correct action is:
+# 1. Immediate rotation of the key/wallet by the legitimate owner.
+# 2. Responsible disclosure if you found it on a third-party site.
+#
+# Any attempt to use a discovered private key to move assets you do not own
+# is theft, unauthorized access, and a serious criminal offense.
+# This software will never assist with, contain code for, or encourage such actions.
+# ------------------------------------------------------------------
+
 app = FastAPI(
     title="KeyCrawl",
-    description="Scan websites for leaked API keys, private keys, tokens and high-entropy secrets.",
-    version="0.1.0",
+    description="Scan websites for leaked API keys, private keys, tokens and high-entropy secrets. Collection dashboard for authorized security research.",
+    version="0.2.0",
 )
+
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
 
 # In-memory job store (ephemeral - perfect for Railway one-off scans)
 JOBS: dict[str, dict[str, Any]] = {}
@@ -39,6 +67,97 @@ class ScanRequest(BaseModel):
     max_depth: int = 1
     max_pages: int = 25
     same_domain_only: bool = True
+
+
+async def init_db() -> None:
+    """Create tables if they don't exist. Only stores redacted data + metadata."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scans (
+                id TEXT PRIMARY KEY,
+                target TEXT NOT NULL,
+                started_at REAL NOT NULL,
+                finished_at REAL,
+                pages_crawled INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS findings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT,
+                discovered_at REAL NOT NULL,
+                url TEXT NOT NULL,
+                secret_type TEXT NOT NULL,
+                value_redacted TEXT NOT NULL,
+                context TEXT,
+                entropy REAL,
+                pattern_name TEXT,
+                FOREIGN KEY (scan_id) REFERENCES scans(id)
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_findings_type ON findings(secret_type)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings(scan_id)")
+        await db.commit()
+
+
+async def save_scan_result(scan_id: str, result: dict) -> None:
+    """Persist a completed scan + its redacted findings to the collection DB."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO scans (id, target, started_at, finished_at, pages_crawled) VALUES (?, ?, ?, ?, ?)",
+            (
+                scan_id,
+                result.get("target"),
+                result.get("started_at") or time.time(),
+                result.get("finished_at"),
+                result.get("pages_crawled", 0),
+            ),
+        )
+        now = time.time()
+        for f in result.get("findings", []):
+            await db.execute(
+                """INSERT INTO findings
+                   (scan_id, discovered_at, url, secret_type, value_redacted, context, entropy, pattern_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    scan_id,
+                    now,
+                    f.get("url"),
+                    f.get("secret_type"),
+                    f.get("value_redacted"),
+                    f.get("context"),
+                    f.get("entropy"),
+                    f.get("pattern_name"),
+                ),
+            )
+        await db.commit()
+
+
+async def get_all_findings(secret_type: str | None = None) -> list[dict]:
+    """Return collected findings (always redacted)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if secret_type:
+            cursor = await db.execute(
+                "SELECT * FROM findings WHERE secret_type = ? ORDER BY discovered_at DESC LIMIT 500",
+                (secret_type,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT * FROM findings ORDER BY discovered_at DESC LIMIT 1000"
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_category_counts() -> list[dict]:
+    """Aggregate counts per secret category for the dashboard."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT secret_type, COUNT(*) as count FROM findings GROUP BY secret_type ORDER BY count DESC"
+        )
+        rows = await cursor.fetchall()
+        return [{"secret_type": r[0], "count": r[1]} for r in rows]
 
 
 def _sanitize_url(u: str) -> str:
@@ -70,19 +189,28 @@ async def _run_scan_job(job_id: str, req: ScanRequest) -> None:
                 d.pop("value", None)
                 safe_findings.append(d)
 
+            done_result = {
+                "target": result.target,
+                "pages_crawled": result.pages_crawled,
+                "findings": safe_findings,
+                "stats": result.stats,
+                "errors": result.errors,
+                "started_at": JOBS[job_id].get("started_at"),
+                "finished_at": time.time(),
+            }
             JOBS[job_id].update(
                 {
                     "status": "done",
                     "finished_at": time.time(),
-                    "result": {
-                        "target": result.target,
-                        "pages_crawled": result.pages_crawled,
-                        "findings": safe_findings,
-                        "stats": result.stats,
-                        "errors": result.errors,
-                    },
+                    "result": done_result,
                 }
             )
+            # Persist to the permanent collection (redacted data only)
+            try:
+                await save_scan_result(job_id, done_result)
+            except Exception as db_exc:
+                # Non-fatal: the current job result is still available in memory
+                print(f"[keycrawl] DB save failed (non-fatal): {db_exc}")
         except Exception as e:
             JOBS[job_id].update(
                 {
@@ -114,13 +242,17 @@ INDEX_HTML = """<!doctype html>
 <body class="bg-zinc-950 text-zinc-200">
   <div class="max-w-5xl mx-auto p-6">
     <div class="flex items-center justify-between mb-8">
-      <div>
-        <h1 class="text-4xl font-semibold tracking-tighter">keycrawl</h1>
-        <p class="text-zinc-400 text-sm mt-1">Website Secrets Scanner — API Keys • Private Keys • Tokens</p>
+      <div class="flex items-center gap-4">
+        <div>
+          <h1 class="text-4xl font-semibold tracking-tighter">keycrawl</h1>
+          <p class="text-zinc-400 text-sm mt-1">Website Secrets Scanner — API Keys • Private Keys • Tokens</p>
+        </div>
+        <a href="/dashboard"
+           class="ml-4 px-4 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-sm font-medium border border-zinc-700">📊 Collection Dashboard</a>
       </div>
       <div class="text-right text-xs text-zinc-500">
         Railway-ready • Private repo<br>
-        <span class="text-emerald-400">v0.1</span>
+        <span class="text-emerald-400">v0.2</span>
       </div>
     </div>
 
@@ -239,6 +371,218 @@ ERROR_PARTIAL = """
   <div class="font-semibold text-red-400 mb-1">Scan failed</div>
   <div class="text-red-300">{{ error }}</div>
 </div>
+"""
+
+# ------------------------------------------------------------------
+# COLLECTION DASHBOARD
+# Shows ALL discovered (redacted) secrets, grouped by category.
+# This is the "all the keys sammelt, nach kategorie" feature.
+# ------------------------------------------------------------------
+DASHBOARD_HTML = """<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KeyCrawl • Dashboard (Collected Secrets)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .finding { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .danger { background: #450a0a; border-color: #7f1d1d; }
+    .category-card { transition: all .1s ease; }
+    .category-card:hover { transform: translateY(-1px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3); }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-200">
+  <div class="max-w-6xl mx-auto p-6">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <a href="/" class="text-emerald-400 hover:underline">&larr; Back to Scanner</a>
+        <h1 class="text-3xl font-semibold tracking-tighter mt-1">Collection Dashboard</h1>
+        <p class="text-zinc-400 text-sm">All discovered secrets (redacted) — categorized for analysis</p>
+      </div>
+      <div class="text-xs text-right text-zinc-500">
+        Data lives in <span class="font-mono">findings.db</span><br>
+        <span class="text-amber-400">Redacted only. Raw values are never stored.</span>
+      </div>
+    </div>
+
+    <!-- Big legal / refusal banner -->
+    <div class="bg-red-950 border border-red-900 rounded-2xl p-5 mb-8 text-sm">
+      <div class="font-semibold text-red-400 mb-2 text-base">⚠️ CRITICAL LEGAL WARNING — READ CAREFULLY</div>
+      <p class="text-red-200">
+        This dashboard only stores <strong>redacted</strong> representations of secrets found during authorized scans.
+        <strong>Private keys (especially Solana wallet private keys) that appear here mean the wallet is fully compromised.</strong>
+      </p>
+      <ul class="list-disc ml-5 mt-2 text-red-300 text-xs space-y-0.5">
+        <li>Discovery of a private key via web scanning almost always indicates a leak or misconfiguration on the scanned site.</li>
+        <li><strong>DO NOT</strong> use any discovered private key to send, transfer, or "drain" funds. That is theft and a criminal offense under US and international law.</li>
+        <li>KeyCrawl and this dashboard contain <strong>zero code</strong> for loading keys, building transactions, or moving assets on Solana (or any chain).</li>
+        <li>If you found keys on a site you do not own: stop, document responsibly, and notify the owner / bug bounty program.</li>
+      </ul>
+      <p class="mt-2 text-[10px] text-red-400">Any request to add auto-draining, sweeping, or "send everything to address X" functionality has been and will be refused.</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6" id="category-summary">
+      <!-- Populated by JS from /api/categories -->
+    </div>
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        <input id="search" type="text" placeholder="Search URL or context..." 
+               class="flex-1 min-w-[220px] bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-emerald-500">
+        
+        <select id="type-filter" class="bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm">
+          <option value="">All categories</option>
+        </select>
+
+        <button onclick="loadFindings()" 
+                class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm">Refresh</button>
+        
+        <button onclick="clearFilters()" 
+                class="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm">Clear filters</button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-zinc-400 border-b border-zinc-800">
+              <th class="py-2 pr-3">When</th>
+              <th class="py-2 pr-3">Category</th>
+              <th class="py-2 pr-3">Redacted Value</th>
+              <th class="py-2 pr-3">Source URL</th>
+              <th class="py-2">Context</th>
+            </tr>
+          </thead>
+          <tbody id="findings-tbody" class="divide-y divide-zinc-800 text-zinc-300"></tbody>
+        </table>
+      </div>
+      <div id="empty-state" class="hidden py-8 text-center text-zinc-500 text-sm">No findings match the current filters.</div>
+    </div>
+
+    <div class="mt-8 text-[10px] text-zinc-500 leading-relaxed">
+      <strong>Solana Private Keys:</strong> If any appear in the list above, the corresponding wallet(s) have had their secret material exposed publicly.
+      The owner must immediately move all funds to a brand new wallet using a fresh seed. There is no safe way to "recover" a leaked private key.
+    </div>
+  </div>
+
+  <script>
+    let allFindings = [];
+    let categories = [];
+
+    async function loadCategories() {
+      const res = await fetch('/api/categories');
+      categories = await res.json();
+      const container = document.getElementById('category-summary');
+      container.innerHTML = '';
+      
+      if (categories.length === 0) {
+        container.innerHTML = '<div class="col-span-4 text-sm text-zinc-500 p-4 bg-zinc-900 rounded-xl border border-zinc-800">No secrets collected yet. Run some scans from the main page.</div>';
+        return;
+      }
+
+      categories.forEach(cat => {
+        const isDanger = /private|solana|key|ssh|pem|jwt/i.test(cat.secret_type);
+        const el = document.createElement('div');
+        el.className = `category-card cursor-pointer bg-zinc-900 border ${isDanger ? 'border-red-900 danger' : 'border-zinc-800'} rounded-2xl p-4`;
+        el.innerHTML = `
+          <div class="text-[10px] uppercase tracking-widest ${isDanger ? 'text-red-400' : 'text-emerald-400'}">${cat.secret_type}</div>
+          <div class="text-4xl font-semibold tabular-nums mt-1 ${isDanger ? 'text-red-400' : ''}">${cat.count}</div>
+          <div class="text-xs text-zinc-500 mt-0.5">findings</div>
+        `;
+        el.onclick = () => {
+          document.getElementById('type-filter').value = cat.secret_type;
+          filterAndRender();
+        };
+        container.appendChild(el);
+      });
+
+      // populate filter dropdown
+      const sel = document.getElementById('type-filter');
+      sel.innerHTML = '<option value="">All categories</option>';
+      categories.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.secret_type;
+        o.textContent = `${c.secret_type} (${c.count})`;
+        sel.appendChild(o);
+      });
+    }
+
+    async function loadFindings() {
+      const res = await fetch('/api/findings');
+      allFindings = await res.json();
+      filterAndRender();
+    }
+
+    function filterAndRender() {
+      const q = (document.getElementById('search').value || '').toLowerCase();
+      const type = document.getElementById('type-filter').value;
+
+      const filtered = allFindings.filter(f => {
+        const matchesType = !type || f.secret_type === type;
+        const matchesQ = !q || 
+          (f.url && f.url.toLowerCase().includes(q)) ||
+          (f.context && f.context.toLowerCase().includes(q)) ||
+          (f.value_redacted && f.value_redacted.toLowerCase().includes(q));
+        return matchesType && matchesQ;
+      });
+
+      const tbody = document.getElementById('findings-tbody');
+      tbody.innerHTML = '';
+      const empty = document.getElementById('empty-state');
+
+      if (filtered.length === 0) {
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+
+      filtered.forEach(f => {
+        const isHighRisk = /private|solana|pem|ssh|key/i.test(f.secret_type);
+        const tr = document.createElement('tr');
+        tr.className = isHighRisk ? 'bg-red-950/30' : '';
+        const when = new Date(f.discovered_at * 1000).toLocaleString();
+        
+        tr.innerHTML = `
+          <td class="py-2 pr-3 text-xs text-zinc-400 whitespace-nowrap align-top">${when}</td>
+          <td class="py-2 pr-3 align-top">
+            <span class="inline-block px-2 py-0.5 rounded text-[10px] font-medium ${isHighRisk ? 'bg-red-900 text-red-300' : 'bg-zinc-800 text-emerald-300'}">${f.secret_type}</span>
+          </td>
+          <td class="py-2 pr-3 font-mono text-amber-300 align-top text-xs break-all">${f.value_redacted}</td>
+          <td class="py-2 pr-3 align-top text-xs text-blue-400 break-all"><a href="${f.url}" target="_blank" class="hover:underline">${f.url}</a></td>
+          <td class="py-2 text-xs text-zinc-400 align-top finding break-all">${(f.context || '').slice(0, 160)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function clearFilters() {
+      document.getElementById('search').value = '';
+      document.getElementById('type-filter').value = '';
+      filterAndRender();
+    }
+
+    // live filter
+    function setupFilters() {
+      ['search', 'type-filter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('input', filterAndRender);
+          el.addEventListener('change', filterAndRender);
+        }
+      });
+    }
+
+    async function initDashboard() {
+      await loadCategories();
+      await loadFindings();
+      setupFilters();
+    }
+
+    window.onload = initDashboard;
+  </script>
+</body>
+</html>
 """
 
 
@@ -376,7 +720,37 @@ async def api_job(job_id: str):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "jobs_in_memory": len(JOBS)}
+    try:
+        cats = await get_category_counts()
+        total = sum(c["count"] for c in cats)
+    except Exception:
+        total = 0
+        cats = []
+    return {
+        "status": "ok",
+        "jobs_in_memory": len(JOBS),
+        "collected_findings": total,
+        "categories": cats,
+    }
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """The main collection dashboard: all keys, by category."""
+    return HTMLResponse(DASHBOARD_HTML)
+
+
+@app.get("/api/findings")
+async def api_findings(secret_type: str | None = None):
+    """Return all collected redacted findings. Optional filter by exact secret_type."""
+    data = await get_all_findings(secret_type)
+    return data
+
+
+@app.get("/api/categories")
+async def api_categories():
+    """Category counts for the dashboard UI."""
+    return await get_category_counts()
 
 
 # Allow running with: python app.py (for Railway worker or local test)

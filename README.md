@@ -122,6 +122,46 @@ keycrawl/
 └── README.md
 ```
 
+## Collection Dashboard (new in v0.2)
+
+Run a few scans, then visit `/dashboard` (or click the button in the main UI).
+
+Features:
+- **All discovered secrets are collected** into a local SQLite file (`findings.db`).
+- Grouped **by category** (`secret_type`): AWS keys, GitHub tokens, Solana Private Key, PEM Private Keys, High Entropy, JWTs, etc.
+- Click any category card to filter the table instantly.
+- Search across URL + context.
+- High-risk categories (anything with "Private Key", "Solana", "PEM", "SSH") are visually highlighted in red.
+- Everything shown is **redacted**. Raw secret material is **never** written to the database or returned by the API.
+
+Start the server, scan a couple of targets, then open http://localhost:8080/dashboard.
+
+### API for the collection
+- `GET /api/findings` → all redacted findings (optionally `?secret_type=Solana Private Key`)
+- `GET /api/categories` → counts per category
+- `GET /health` → now also returns `collected_findings` + breakdown
+
+## Important: Solana private keys & "drain everything" requests
+
+**This tool will never implement automatic (or manual) draining of wallets.**
+
+If the scanner detects a Solana private key (or any other private key), it means that key material has been leaked on the crawled website. The correct and only legal response is:
+
+- The legitimate owner must immediately generate a new wallet and move funds.
+- You (the scanner operator) must not use the key.
+
+Any code that would:
+- Load a discovered private key (Solana or otherwise)
+- Connect to an RPC
+- Build a transaction
+- Send SOL / SPL tokens / "alles auf der wallet" to any address (e.g. `FwLMGHC2npzkrJrNiUcpiiRqmXqtVQi2zpXCwDEq3QFm` or any other)
+
+...has been **explicitly refused** and is not present in this repository (and never will be).
+
+Building or operating tooling whose purpose is to steal funds via leaked credentials is a serious crime (theft, computer fraud, etc.). I will not assist with it.
+
+The dashboard exists purely for **visibility and responsible security research / leak tracking**.
+
 ## Future ideas (contributions welcome)
 
 - Optional secret verification (live calls with redacted test requests)
