@@ -371,7 +371,7 @@ DASHBOARD_HTML = """<!doctype html>
           <div class="flex gap-2 mb-2">
             <input id="quick-export-url" type="text" placeholder="https://your-site.example (your own site)" 
                    class="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-yellow-500">
-            <button onclick="quickUnredactedExport()" 
+            <button id="quick-export-btn"
                     class="bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-black font-semibold px-4 py-2 rounded-xl text-sm whitespace-nowrap">
               Scan &amp; Download Full Raw Locally
             </button>
@@ -564,22 +564,33 @@ DASHBOARD_HTML = """<!doctype html>
       await loadCategories();
       await loadFindings();
       setupFilters();
+
+      // Attach quick export button listener (more reliable than inline onclick)
+      const quickBtn = document.getElementById('quick-export-btn');
+      if (quickBtn) {
+        quickBtn.addEventListener('click', quickUnredactedExport);
+      }
     }
 
     // Quick one-click unredacted local export directly from dashboard
     async function quickUnredactedExport() {
       const input = document.getElementById('quick-export-url');
       const status = document.getElementById('quick-export-status');
+      if (!input || !status) {
+        alert('UI elements not found. Please reload the page.');
+        console.error('quick-export elements missing');
+        return;
+      }
       const url = input.value.trim();
       if (!url) {
-        alert('Please enter a URL');
+        alert('Please enter a target URL first');
         return;
       }
 
       status.classList.remove('hidden');
       status.textContent = 'Starting scan...';
-      const btns = document.querySelectorAll('button');
-      btns.forEach(b => b.disabled = true);
+      const allButtons = document.querySelectorAll('button');
+      allButtons.forEach(b => b.disabled = true);
 
       try {
         // Trigger scan (small limits for quick export)
@@ -593,58 +604,63 @@ DASHBOARD_HTML = """<!doctype html>
             same_domain_only: true
           })
         });
+        if (!scanRes.ok) throw new Error('Failed to start scan: ' + scanRes.status);
         const scanData = await scanRes.json();
         const jobId = scanData.job_id;
+        if (!jobId) throw new Error('No job ID returned');
 
         status.textContent = `Scanning... (job ${jobId})`;
 
         // Poll until done
         let done = false;
         let attempts = 0;
-        while (!done && attempts < 60) {
-          await new Promise(r => setTimeout(r, 1200));
+        const maxAttempts = 90; // ~2 minutes
+        while (!done && attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 1300));
           const jobRes = await fetch(`/api/jobs/${jobId}`);
+          if (!jobRes.ok) throw new Error('Poll failed');
           const job = await jobRes.json();
           if (job.status === 'done') {
             done = true;
           } else if (job.status === 'error') {
-            throw new Error(job.error || 'Scan failed');
+            throw new Error(job.error || 'Scan failed on server');
           }
           attempts++;
-          status.textContent = `Scanning... (${attempts})`;
+          status.textContent = `Scanning... (${attempts}/${maxAttempts})`;
         }
 
-        if (!done) throw new Error('Scan timed out');
+        if (!done) throw new Error('Scan timed out. Try a simpler target or use CLI.');
 
-        status.textContent = 'Downloading full raw...';
+        status.textContent = 'Processing results...';
 
-        // Get full data, then filter to ONLY wallet private keys and download as clean text
+        // Get full data, filter ONLY wallet private keys, download as clean .txt
         const exportRes = await fetch(`/api/scan/${jobId}/full-export`);
-        if (!exportRes.ok) throw new Error('Export failed');
+        if (!exportRes.ok) throw new Error('Failed to get export: ' + exportRes.status);
         const fullData = await exportRes.json();
 
         const walletTypes = [
-            "Solana Private Key",
-            "Solana Private Key (raw base58)",
-            "Ethereum / EVM Private Key",
-            "Wallet Mnemonic / Seed Phrase",
-            "Wallet Private Key"
+          "Solana Private Key",
+          "Solana Private Key (raw base58)",
+          "Ethereum / EVM Private Key",
+          "Wallet Mnemonic / Seed Phrase",
+          "Wallet Private Key"
         ];
 
         const lines = [];
         for (const f of (fullData.findings || [])) {
-            const stype = f.secret_type || "";
-            if (walletTypes.some(wt => stype.includes(wt))) {
-                const raw = f.raw_value || f.value;
-                if (raw && raw.length > 20) {
-                    lines.push(raw);
-                }
+          const stype = f.secret_type || f["secret_type"] || "";
+          if (walletTypes.some(wt => stype.includes(wt))) {
+            const raw = f.raw_value || f.value || f["raw_value"];
+            if (raw && typeof raw === 'string' && raw.length > 20) {
+              lines.push(raw);
             }
+          }
         }
 
         if (lines.length === 0) {
-            status.textContent = 'No wallet private keys found in this scan.';
-            return;
+          status.textContent = 'No wallet private keys found in this scan.';
+          setTimeout(() => { status.classList.add('hidden'); status.textContent = ''; }, 4000);
+          return;
         }
 
         const text = lines.join('\n') + '\n';
@@ -658,18 +674,19 @@ DASHBOARD_HTML = """<!doctype html>
         document.body.removeChild(a);
         URL.revokeObjectURL(downloadUrl);
 
-        status.textContent = `Download complete! ${lines.length} unredacted wallet key(s) saved locally.`;
+        status.textContent = `Done! Downloaded ${lines.length} unredacted wallet key(s) to wallet-keys-${jobId}.txt`;
         setTimeout(() => {
           status.classList.add('hidden');
           status.textContent = '';
-        }, 4000);
+        }, 6000);
 
       } catch (e) {
-        console.error(e);
-        status.textContent = 'Error: ' + e.message;
-        setTimeout(() => { status.classList.add('hidden'); }, 6000);
+        console.error('quickUnredactedExport error:', e);
+        status.textContent = 'Error: ' + (e.message || e);
+        // Keep status visible longer on error
+        setTimeout(() => { status.classList.add('hidden'); }, 8000);
       } finally {
-        btns.forEach(b => b.disabled = false);
+        allButtons.forEach(b => b.disabled = false);
       }
     }
 
