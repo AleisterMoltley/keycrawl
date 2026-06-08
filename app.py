@@ -377,10 +377,27 @@ DASHBOARD_HTML = """<!doctype html>
             </button>
           </div>
           <div class="text-[10px] text-yellow-400">
-            Triggers a small scan → when done, automatically downloads the complete unredacted JSON (raw values) directly to your computer.<br>
-            This collection stays redacted. No CLI needed. The raw data is only for this scan (ephemeral on server).
+            One click: small scan → unredacted wallet keys (only) appear directly in the list below (in-browser only, no download, no server-side raw storage).<br>
+            Collection stays redacted. Ephemeral for this scan. Use "Load local archive" below for previous exports.
           </div>
           <div id="quick-export-status" class="text-[10px] text-emerald-400 mt-1 hidden"></div>
+
+          <!-- Area to display unredacted keys directly in browser -->
+          <div id="unredacted-viewer" class="mt-4 hidden bg-zinc-950 border border-yellow-600 rounded-xl p-4">
+            <div class="flex justify-between items-center mb-2">
+              <div class="font-semibold text-yellow-300">Unredacted Wallet Keys (visible in browser)</div>
+              <button onclick="copyUnredactedKeys()" class="text-xs bg-yellow-600 hover:bg-yellow-500 text-black px-2 py-0.5 rounded">Copy all</button>
+            </div>
+            <pre id="unredacted-keys-list" class="text-xs font-mono bg-black p-3 rounded overflow-auto max-h-64 whitespace-pre-wrap break-all border border-zinc-800"></pre>
+            <div class="text-[10px] text-yellow-400 mt-1">These are the raw keys from the last quick scan or loaded archive. Copy them now – they are not stored anywhere by the tool.</div>
+          </div>
+
+          <!-- Load local archive file to view unredacted in browser -->
+          <div class="mt-2 text-xs">
+            <label class="block text-yellow-400 mb-1">Or load your local unredacted archive file (.jsonl or .json) to view raw wallet keys here (client-side only, nothing sent to server):</label>
+            <input type="file" id="load-archive-input" accept=".jsonl,.json" class="text-xs">
+            <button onclick="loadAndShowLocalArchive()" class="ml-2 bg-yellow-600 hover:bg-yellow-500 text-black text-xs px-2 py-0.5 rounded">Load &amp; Show Raw Keys</button>
+          </div>
         </div>
       </div>
       <div class="text-xs text-right text-zinc-500">
@@ -668,18 +685,17 @@ DASHBOARD_HTML = """<!doctype html>
           return;
         }
 
-        const text = lines.join('\n') + '\n';
-        const blob = new Blob([text], { type: 'text/plain' });
-        const downloadUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `wallet-keys-${jobId}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
+        // Show directly in browser (unredacted list) - no auto-download, no server storage
+        const viewer = document.getElementById('unredacted-viewer');
+        const listEl = document.getElementById('unredacted-keys-list');
+        if (viewer && listEl) {
+          viewer.classList.remove('hidden');
+          listEl.textContent = lines.join('\n');
+          // store for copy
+          viewer.dataset.keys = lines.join('\n');
+        }
 
-        status.textContent = `Done! Downloaded ${lines.length} unredacted wallet key(s) to wallet-keys-${jobId}.txt`;
+        status.textContent = `Done! ${lines.length} unredacted wallet key(s) shown below in browser (copy them now - nothing stored or downloaded automatically).`;
         setTimeout(() => {
           status.classList.add('hidden');
           status.textContent = '';
@@ -693,6 +709,90 @@ DASHBOARD_HTML = """<!doctype html>
       } finally {
         allButtons.forEach(b => b.disabled = false);
       }
+    }
+
+    function copyUnredactedKeys() {
+      const viewer = document.getElementById('unredacted-viewer');
+      const listEl = document.getElementById('unredacted-keys-list');
+      if (!viewer || !listEl) return;
+      const keysText = viewer.dataset.keys || listEl.textContent;
+      if (!keysText) return;
+      navigator.clipboard.writeText(keysText).then(() => {
+        const orig = listEl.textContent;
+        listEl.textContent = 'Copied to clipboard!';
+        setTimeout(() => { listEl.textContent = orig; }, 1500);
+      }).catch(() => {
+        // fallback
+        prompt('Copy these keys (Ctrl/Cmd+C):', keysText);
+      });
+    }
+
+    async function loadAndShowLocalArchive() {
+      const fileInput = document.getElementById('load-archive-input');
+      const viewer = document.getElementById('unredacted-viewer');
+      const listEl = document.getElementById('unredacted-keys-list');
+      if (!fileInput || !fileInput.files.length || !viewer || !listEl) {
+        alert('Select a .jsonl or .json archive file first.');
+        return;
+      }
+      const file = fileInput.files[0];
+      const text = await file.text();
+
+      const walletTypes = [
+        "Solana Private Key",
+        "Solana Private Key (raw base58)",
+        "Ethereum / EVM Private Key",
+        "Wallet Mnemonic / Seed Phrase",
+        "Wallet Private Key"
+      ];
+
+      const lines = [];
+      const recs = [];
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          recs.push(...parsed);
+        } else if (parsed && parsed.findings) {
+          recs.push(parsed);
+        } else {
+          // assume JSONL
+          text.split(/\r?\n/).forEach(line => {
+            const t = line.trim();
+            if (t) {
+              try { recs.push(JSON.parse(t)); } catch(e){}
+            }
+          });
+        }
+      } catch (e) {
+        // treat as JSONL
+        text.split(/\r?\n/).forEach(line => {
+          const t = line.trim();
+          if (t) {
+            try { recs.push(JSON.parse(t)); } catch(e){}
+          }
+        });
+      }
+
+      for (const rec of recs) {
+        for (const f of (rec.findings || [])) {
+          const stype = f.secret_type || f["secret_type"] || "";
+          if (walletTypes.some(wt => stype.includes(wt))) {
+            const raw = f.raw_value || f.value || f["raw_value"];
+            if (raw && typeof raw === 'string' && raw.length > 20) {
+              lines.push(raw);
+            }
+          }
+        }
+      }
+
+      if (lines.length === 0) {
+        alert('No wallet private keys found in the selected archive file.');
+        return;
+      }
+
+      viewer.classList.remove('hidden');
+      listEl.textContent = lines.join('\n');
+      viewer.dataset.keys = lines.join('\n');
     }
 
     window.onload = initDashboard;
