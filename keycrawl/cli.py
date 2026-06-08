@@ -91,6 +91,13 @@ def scan(
              "WARNING: This prints actual secrets to your terminal. Use only when scanning your own controlled test data. "
              "Never use on production or untrusted sites. Raw values are not saved anywhere by this tool.",
     ),
+    export_full: bool = typer.Option(
+        False,
+        "--export-full",
+        help="After the scan, export the COMPLETE findings (including raw secret values) to a local timestamped JSON file. "
+             "HUGE WARNING: The file will contain actual usable secrets. Only use for scanning your own controlled systems. "
+             "The tool does NOT store these in any persistent collection or DB. You are responsible for securing/deleting the export file.",
+    ),
 ):
     """Crawl a site and hunt for secrets.
 
@@ -152,6 +159,9 @@ def scan(
     if persist:
         _persist_redacted(result, safe_findings)
 
+    if export_full:
+        _export_full_scan(result)
+
 
 def _persist_redacted(result: ScanResult, safe_findings: list[dict]) -> None:
     """Helper to persist redacted findings from CLI."""
@@ -170,6 +180,58 @@ def _persist_redacted(result: ScanResult, safe_findings: list[dict]) -> None:
         rprint("[dim]Open the web dashboard (/dashboard) or use the web UI to browse the collection by category.[/dim]")
     except Exception as e:
         rprint(f"[red]Failed to persist to DB: {e}[/red]")
+
+
+def _export_full_scan(result: ScanResult) -> None:
+    """Export the full scan result including raw secrets to a local file.
+
+    This is provided so the operator can have the complete data for their own
+    controlled scans / archives. The tool itself never stores raw values in
+    its persistent collection or dashboard.
+    """
+    import json
+    from datetime import datetime
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"keycrawl-full-export-{ts}.json"
+
+    # Prepare a full dump: include everything from the result, plus raw values
+    export_data = {
+        "_WARNING": "THIS FILE CONTAINS ACTUAL SECRET VALUES (raw private keys, API keys, etc.). "
+                    "Handle with extreme care. Delete after use if possible. "
+                    "This export was created by the operator for their own controlled scan. "
+                    "The KeyCrawl tool does not store or archive raw secrets in its database or dashboard.",
+        "scan": {
+            "target": result.target,
+            "started_at": result.started_at,
+            "finished_at": result.finished_at,
+            "pages_crawled": result.pages_crawled,
+            "stats": result.stats,
+            "errors": result.errors,
+        },
+        "findings": [
+            {
+                "url": f.url,
+                "secret_type": f.secret_type,
+                "value": f.value,  # RAW - the actual secret
+                "value_redacted": f.value_redacted,
+                "context": f.context,
+                "entropy": f.entropy,
+                "pattern_name": f.pattern_name,
+            }
+            for f in result.findings
+        ],
+    }
+
+    try:
+        with open(filename, "w", encoding="utf-8") as fp:
+            json.dump(export_data, fp, indent=2, ensure_ascii=False)
+
+        rprint(f"\n[bold yellow]FULL EXPORT WRITTEN: {filename}[/bold yellow]")
+        rprint("[bold red]This file contains RAW SECRETS. Secure it or delete it immediately after use.[/bold red]")
+        rprint("[dim]The persistent collection (--persist / /dashboard) remains redacted-only.[/dim]")
+    except Exception as e:
+        rprint(f"[red]Failed to write full export: {e}[/red]")
 
 
 @app.command()

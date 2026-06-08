@@ -167,13 +167,28 @@ Any code that would:
 - Load a discovered private key (Solana or otherwise)
 - Connect to an RPC
 - Build a transaction
-- Send SOL / SPL tokens / "alles auf der wallet" to any address (e.g. `FwLMGHC2npzkrJrNiUcpiiRqmXqtVQi2zpXCwDEq3QFm` or any other)
+- Send SOL / SPL tokens / "alles auf der wallet" to any address (or any other malicious action with discovered keys)
 
 ...has been **explicitly refused** and is not present in this repository (and never will be).
 
 Building or operating tooling whose purpose is to steal funds via leaked credentials is a serious crime (theft, computer fraud, etc.). I will not assist with it.
 
-The dashboard exists purely for **visibility and responsible security research / leak tracking**.
+The dashboard exists purely for **visibility and responsible security research / leak tracking** (redacted only).
+
+## Getting full (unredacted) data for your own scans
+
+If you are scanning your own controlled systems and need the complete raw values for a specific scan (e.g. to review in your private archive):
+
+- **CLI**: `python -m keycrawl scan https://your-own-site.example --export-full`
+  This writes a local JSON file containing the full findings (including raw secrets) + a big warning header. The file is **not** stored by the tool.
+
+- **CLI live view**: `--show-raw` shows raw values in the terminal output for that run only.
+
+- **Web UI**: After running a scan, the live result page shows the raw values. You can also call `/api/scan/<job_id>/full-export` (while the job is fresh in memory) to download a JSON with everything for that one scan.
+
+**Important**: The persistent collection (`/dashboard`, the DB, `--persist`) **never** receives or displays raw secret values. This is by design for security. Found secrets (especially private keys) should be rotated immediately, not archived as plaintext by the scanner.
+
+If you need an "archive" of leak locations from your own projects, the redacted + full context + URL in the dashboard is the safe and sufficient record.
 
 ## Future ideas (contributions welcome)
 

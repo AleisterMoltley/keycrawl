@@ -265,7 +265,8 @@ RESULT_PARTIAL = """
     <strong>⚠️ LIVE SCAN RESULT — RAW SECRETS VISIBLE HERE</strong><br>
     These values are only shown for the scan you just triggered (in-memory only).<br>
     They are <strong>NOT</strong> saved to the permanent collection or dashboard.<br>
-    The collection (/dashboard) only ever stores redacted versions.
+    The collection (/dashboard) only ever stores redacted versions.<br>
+    <strong>For a downloadable JSON of this scan including raw values:</strong> call /api/scan/&lt;job_id&gt;/full-export while this result is still fresh (job_id is in the URL or your scan response).
   </div>
   <div class="space-y-3">
     {% for f in findings %}
@@ -340,7 +341,8 @@ DASHBOARD_HTML = """<!doctype html>
       <p class="text-red-200">
         <strong>THIS COLLECTION (DASHBOARD) ONLY STORES REDACTED VERSIONS.</strong><br>
         Raw secret values are <strong>never</strong> written to the persistent database or shown in the historical collection.
-        They are only visible in the live result of a scan you just triggered (ephemeral in-memory only).
+        They are only visible in the live result of a scan you just triggered (ephemeral in-memory only).<br>
+        Use CLI <code>--export-full</code> or the live scan API endpoint to get full raw data for a specific scan into a local file you control.
       </p>
       <p class="text-red-200 mt-2">
         Private keys (especially Solana wallet private keys) that appear here (even redacted) mean the wallet is fully compromised.
@@ -647,6 +649,40 @@ async def api_job(job_id: str):
     if not job:
         return JSONResponse({"error": "not found"}, status_code=404)
     return job
+
+
+@app.get("/api/scan/{job_id}/full-export")
+async def api_full_export(job_id: str):
+    """
+    Return the full scan result for a live job (including raw secret values).
+    ONLY for the operator who just ran this specific scan.
+    This is ephemeral (in-memory only while the job exists).
+    The persistent collection never receives raw values.
+    Use responsibly. Download and handle the secrets with care, then forget them.
+    """
+    job = JOBS.get(job_id)
+    if not job or job.get("status") != "done":
+        return JSONResponse(
+            {"error": "Job not found or not complete. Full exports are only available immediately after a scan for the current session."},
+            status_code=404,
+        )
+
+    # Return the done_result which for live jobs includes the full findings with 'value'
+    result = job.get("result", {})
+    export = {
+        "_WARNING": "RAW SECRET VALUES INCLUDED. This is only for the scan you just performed. "
+                    "Handle with extreme care. The KeyCrawl persistent collection (/dashboard) stores only redacted data. "
+                    "Rotate any real private keys immediately.",
+        "job_id": job_id,
+        "target": result.get("target"),
+        "started_at": result.get("started_at"),
+        "finished_at": result.get("finished_at"),
+        "pages_crawled": result.get("pages_crawled"),
+        "stats": result.get("stats"),
+        "errors": result.get("errors"),
+        "findings": result.get("findings", []),  # includes 'value' (raw) for this live export
+    }
+    return JSONResponse(export)
 
 
 @app.get("/health")
