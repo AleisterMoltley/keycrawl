@@ -358,19 +358,19 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
     <input id="url" type="text" value="https://stableponzi.com/" 
            class="w-full bg-zinc-950 border border-zinc-600 rounded-xl px-4 py-3 text-lg mb-3 focus:outline-none focus:border-emerald-500">
-    <button id="scan-btn" 
-            class="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-xl font-medium text-lg">
+    <button id="scan-btn" type="button" onclick="doScan()"
+            class="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 py-3 rounded-xl font-medium text-lg transition">
       Scan for Wallet Keys
     </button>
-    <div id="status" class="mt-3 p-2 bg-zinc-800 text-lg font-bold text-emerald-400 min-h-[2rem] rounded"></div>
+    <div id="status" class="mt-3 p-3 bg-zinc-800 text-sm font-medium text-emerald-400 min-h-[2.5rem] rounded border border-emerald-600">Status: bereit. Klick auf den Button → sofort sichtbare Rückmeldung (farbig + Text + Button-Änderung).</div>
   </div>
 
-  <div id="results" class="mt-6 border border-zinc-600 rounded-xl p-4 bg-zinc-900">
+  <div id="results" class="mt-6 border-2 border-emerald-600 rounded-xl p-4 bg-zinc-900">
     <div class="flex justify-between items-center mb-2">
-      <div class="font-semibold">Unredacted Wallet Keys (only)</div>
+      <div class="font-semibold text-lg">Unredacted Wallet Keys (only)</div>
       <button onclick="copyAll()" class="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded">Copy all</button>
     </div>
-    <pre id="keys" class="bg-black p-4 rounded text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800 min-h-[3rem]">Klicke auf den Button um zu scannen. Die Keys erscheinen hier direkt im Browser.</pre>
+    <pre id="keys" class="bg-black p-4 rounded text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800 min-h-[4rem] text-yellow-300">Klicke auf "Scan for Wallet Keys". Du siehst SOFORT Feedback (Button + Status + Text hier ändern sich). Dann erscheinen die unredacted Keys (eine pro Zeile) oder eine Fehlermeldung.</pre>
   </div>
 
   <div class="mt-8 text-xs text-zinc-500">
@@ -379,24 +379,48 @@ DASHBOARD_HTML = """<!doctype html>
 
   <script>
     async function doScan() {
-      const urlInput = document.getElementById('url');
-      const btn = document.getElementById('scan-btn');
-      const status = document.getElementById('status');
-      const keysPre = document.getElementById('keys');
-      const url = urlInput.value.trim();
-      if (!url) {
-        alert('Bitte URL eingeben!');
-        return;
-      }
-      // Immediate feedback - this MUST happen
-      console.log('%c[KeyCrawl] doScan called with url:', 'color:lime', url);
-      btn.disabled = true;
-      const origBtnText = btn.innerText;
-      btn.innerText = 'Scanning...';
-      status.style.backgroundColor = '#166534'; // green bg for visibility
-      status.textContent = 'Scanning ' + url + ' ...';
-      keysPre.textContent = 'Scanning... (warte auf Server Antwort)';
+      // === ULTRA RELIABLE IMMEDIATE FEEDBACK ===
+      // This runs synchronously the moment the function is invoked (via onclick or listener).
+      // Guarantees visible change even if later code crashes or elements are missing.
+      console.log('%c[KeyCrawl] doScan() INVOKED — click registered', 'color:#0f0;font-size:13px');
       try {
+        const statusEl = document.getElementById('status');
+        const btnEl = document.getElementById('scan-btn');
+        const keysEl = document.getElementById('keys');
+
+        // 1. Make status impossible to miss (big green banner)
+        if (statusEl) {
+          statusEl.style.cssText = 'background:#052e16;border:2px solid #4ade80;color:#4ade80;font-weight:700;font-size:15px;padding:10px 12px;margin-top:8px;border-radius:8px;';
+          statusEl.textContent = '✅ KLICK ERKANNT — Scan startet sofort...';
+        }
+        // 2. Button visual change right now
+        let origBtnText = 'Scan for Wallet Keys';
+        if (btnEl) {
+          origBtnText = btnEl.innerText || origBtnText;
+          btnEl.disabled = true;
+          btnEl.innerText = 'Scanning…';
+          btnEl.style.backgroundColor = '#166534';
+          btnEl.style.border = '2px solid #4ade80';
+        }
+        // 3. Keys area shows we are working
+        if (keysEl) {
+          keysEl.style.borderColor = '#4ade80';
+          keysEl.textContent = 'Scanning... (Server-Antwort wird erwartet — kann 5–40s dauern je nach Seite)';
+        }
+
+        // now collect input (after showing feedback, so even bad URL still shows "click worked")
+        const urlInput = document.getElementById('url');
+        const url = (urlInput && urlInput.value || '').trim();
+        if (!url) {
+          if (statusEl) { statusEl.style.backgroundColor='#7f1d1d'; statusEl.textContent='Bitte eine URL eingeben!'; }
+          if (btnEl) { btnEl.disabled=false; btnEl.innerText=origBtnText; btnEl.style.backgroundColor=''; btnEl.style.border=''; }
+          if (keysEl) keysEl.textContent = 'Klicke auf den Button. Die unredacted Keys erscheinen HIER direkt im Browser (eine pro Zeile).';
+          return;
+        }
+
+        // update status with real target
+        if (statusEl) statusEl.textContent = 'Scanning ' + url + ' … (bitte warten)';
+
         const r = await fetch('/scan-wallet-keys', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
@@ -405,20 +429,31 @@ DASHBOARD_HTML = """<!doctype html>
         const d = await r.json();
         if (d.error) throw new Error(d.error);
         if (!d.keys || d.keys.length === 0) {
-          keysPre.textContent = 'Keine Wallet Private Keys gefunden.\n\n(Hinweis: Der Crawler holt den HTML/JS-Quelltext. Manche Keys sind nur in dynamisch geladenem JS oder nach Login. Versuche eine andere URL oder CLI für mehr Tiefe.)';
+          if (keysEl) keysEl.textContent = 'Keine Wallet Private Keys gefunden.\n\n(Hinweis: Der Crawler holt den HTML/JS-Quelltext. Manche Keys sind nur in dynamisch geladenem JS oder nach Login. Versuche eine andere URL oder CLI für mehr Tiefe.)';
         } else {
-          keysPre.textContent = d.keys.join('\n');
+          if (keysEl) keysEl.textContent = d.keys.join('\n');
         }
-        status.style.backgroundColor = '';
-        status.textContent = `Fertig: ${d.keys ? d.keys.length : 0} Keys von ${d.target} (${d.pages_crawled || '?'} Seiten)`;
+        if (statusEl) {
+          statusEl.style.cssText = 'background:#052e16;border:1px solid #4ade80;color:#4ade80;padding:8px;border-radius:8px;';
+          statusEl.textContent = `Fertig: ${d.keys ? d.keys.length : 0} Keys von ${d.target || url} (${d.pages_crawled || '?'} Seiten)`;
+        }
       } catch(e) {
-        keysPre.textContent = 'Fehler: ' + (e.message || e);
-        status.style.backgroundColor = '#7f1d1d';
-        status.textContent = 'Scan fehlgeschlagen. Siehe Console (F12) für Details.';
-        console.error(e);
+        const statusEl = document.getElementById('status');
+        const keysEl = document.getElementById('keys');
+        if (keysEl) keysEl.textContent = 'Fehler: ' + (e && e.message ? e.message : e);
+        if (statusEl) {
+          statusEl.style.cssText = 'background:#7f1d1d;border:2px solid #f87171;color:#fecaca;padding:10px;border-radius:8px;';
+          statusEl.textContent = 'Scan fehlgeschlagen. Siehe Console (F12) für Details. ' + (e && e.message ? e.message : '');
+        }
+        console.error('[KeyCrawl] scan error', e);
       } finally {
-        btn.disabled = false;
-        btn.innerText = origBtnText;
+        const btnEl = document.getElementById('scan-btn');
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.style.backgroundColor = '';
+          btnEl.style.border = '';
+          if (!btnEl.innerText || btnEl.innerText === 'Scanning…') btnEl.innerText = 'Scan for Wallet Keys';
+        }
       }
     }
     function copyAll() {
@@ -436,15 +471,42 @@ DASHBOARD_HTML = """<!doctype html>
         alert('Kopieren nicht möglich. Inhalt:\n' + t);
       });
     }
-    // Attach listener reliably
-    document.addEventListener('DOMContentLoaded', function() {
-      const scanBtn = document.getElementById('scan-btn');
-      if (scanBtn) {
-        scanBtn.addEventListener('click', doScan);
-        console.log('%c[KeyCrawl] scan button listener attached', 'color:lime');
+    // Attach listener reliably (belt + suspenders: we also have inline onclick on the button)
+    function attachScanListener() {
+      try {
+        const scanBtn = document.getElementById('scan-btn');
+        if (scanBtn) {
+          // remove old to avoid double
+          scanBtn.removeEventListener('click', doScan);
+          scanBtn.addEventListener('click', doScan);
+          console.log('%c[KeyCrawl] scan button listener attached (safe)', 'color:#0f0');
+          // also force a visible "JS is alive" hint in status once
+          const st = document.getElementById('status');
+          if (st && (!st.textContent || st.textContent.length < 5)) {
+            st.style.background = '#111827';
+            st.style.border = '1px solid #334155';
+            st.textContent = 'JS bereit — Button-Klick gibt jetzt sofort sichtbares Feedback.';
+            setTimeout(() => { if (st && st.textContent && st.textContent.includes('JS bereit')) { st.textContent=''; st.style.background=''; st.style.border=''; } }, 4200);
+          }
+        }
+      } catch (e) { console.warn('attach failed', e); }
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', attachScanListener);
+    } else {
+      // already loaded
+      setTimeout(attachScanListener, 0);
+    }
+    // last-resort direct property in case
+    setTimeout(function() {
+      const b = document.getElementById('scan-btn');
+      if (b && !b.__kc_wired) {
+        b.__kc_wired = true;
+        const prev = b.onclick;
+        b.onclick = function(ev){ if (typeof doScan === 'function') doScan(); if (prev) prev.call(this, ev); };
       }
-    });
-    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage).', 'color:#4ade80');
+    }, 800);
+    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage). onclick + listener', 'color:#4ade80');
   </script>
 </body>
 </html>
@@ -476,17 +538,28 @@ async def api_categories():
 async def scan_wallet_keys(req: ScanRequest):
     """Simple endpoint for the user's request: scan and return ONLY unredacted wallet private keys.
     No DB storage, no redaction for this, ephemeral. Everything in browser.
+    Always returns JSON. Never leaves the request hanging without response.
     """
+    import asyncio as _asyncio
+    print(f"[scan-wallet-keys] START url={req.url} (from client)")
     try:
-        result: ScanResult = await crawl_and_scan(
-            req.url,
-            max_depth=1,
-            max_pages=10,
-            same_domain_only=True,
-            concurrency=3,
-            request_delay=0.05,
+        result: ScanResult = await _asyncio.wait_for(
+            crawl_and_scan(
+                req.url,
+                max_depth=1,
+                max_pages=12,
+                same_domain_only=True,
+                concurrency=4,
+                request_delay=0.04,
+            ),
+            timeout=95.0  # hard cap so UI always gets a response
         )
+        print(f"[scan-wallet-keys] DONE pages={result.pages_crawled} findings={len(result.findings)}")
+    except _asyncio.TimeoutError:
+        print("[scan-wallet-keys] TIMEOUT")
+        return JSONResponse({"error": "Scan timed out after ~95s. Try a simpler/faster target or use CLI."}, status_code=504)
     except Exception as e:
+        print(f"[scan-wallet-keys] ERROR: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
     wallet_types = [
