@@ -350,6 +350,28 @@ DASHBOARD_HTML = """<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KeyCrawl - Nur Wallet Keys (simpel)</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- EARLY PROOF SCRIPT - runs as soon as the parser hits it, before the big main script.
+       If you see the green badge update or a toast immediately on load, JS is executing.
+       If nothing happens here but /debug-ui shows the code, your browser is blocking inline scripts (CSP / extension). -->
+  <script>
+    (function() {
+      try {
+        console.log('%c[KeyCrawl] EARLY SCRIPT EXECUTED (head)', 'color:#22c55e;font-size:13px;font-weight:bold');
+        // Try to create toast super early
+        var d = document.createElement('div');
+        d.id = 'kc-early-toast';
+        d.style.cssText = 'position:fixed;top:4px;left:4px;z-index:9999999;padding:6px 10px;background:#052e16;color:#4ade80;font:12px monospace;border:2px solid #4ade80;border-radius:4px;';
+        d.textContent = 'JS EARLY @ ' + new Date().toLocaleTimeString();
+        (document.body || document.documentElement).appendChild(d);
+        setTimeout(function(){ var el=document.getElementById('kc-early-toast'); if(el) el.remove(); }, 4000);
+        // Also mutate the h1 if it exists later
+        setTimeout(function(){
+          var h = document.querySelector('h1');
+          if (h) h.textContent = h.textContent + ' [JS:EARLY]';
+        }, 50);
+      } catch(e) { console.warn('[KeyCrawl] early script error', e); }
+    })();
+  </script>
 </head>
 <body class="bg-zinc-950 text-zinc-200 p-8 max-w-2xl mx-auto">
   <h1 class="text-4xl font-bold mb-1">keycrawl</h1>
@@ -363,6 +385,13 @@ DASHBOARD_HTML = """<!doctype html>
     3. Zum Testen ob der Server den neuen Code hat: <a href="/debug-ui" style="color:#93c5fd;text-decoration:underline" target="_blank">/debug-ui</a> öffnen oder curlen. Sag mir den Wert von "ui_build_marker" und ob "has_toast_helper": true.<br>
     4. F12 → Console aufmachen, Test-Button klicken und nach roten Fehlern oder "[KeyCrawl]" suchen (CSP? Script blocked?).
   </div>
+
+  <noscript>
+    <div style="background:#7f1d1d;border:3px solid #f87171;color:white;padding:12px;margin:10px 0;font-weight:bold;">
+      ⚠️ JavaScript ist deaktiviert oder wird blockiert. Ohne JS gibt es keine Klick-Feedbacks und keine Scans.
+      Aktiviere JS, deaktiviere Blocker (uBlock, NoScript, etc.) oder probiere Inkognito.
+    </div>
+  </noscript>
 
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
     <input id="url" type="text" placeholder="https://deine-eigene-seite.de  (nur Seiten die du selbst kontrollierst!)"
@@ -571,7 +600,18 @@ DASHBOARD_HTML = """<!doctype html>
       }
     } catch(e){}
 
-    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage). onclick + listener + floating toast + test button', 'color:#4ade80');
+    // ULTIMATE PROOF: any click anywhere on the document will show a toast (capture phase).
+    // If you click the TEST button or anywhere and see a toast saying "DOCUMENT CLICK", the main script definitely ran.
+    try {
+      document.addEventListener('click', function(ev) {
+        try {
+          _kcShowToast('DOCUMENT CLICK CAPTURED — script is alive. Target: ' + (ev.target && ev.target.tagName || '?'), '#4ade80');
+        } catch(_) {}
+      }, true); // capture
+      console.log('%c[KeyCrawl] global document click listener attached (capture)', 'color:#0f0');
+    } catch(e){}
+
+    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage). onclick + listener + floating toast + test button + global click proof', 'color:#4ade80');
   </script>
 </body>
 </html>
