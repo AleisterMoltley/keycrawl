@@ -89,6 +89,10 @@ NOISE_SUBSTRINGS = {
     "insert", "replace", "changeme", "xxxxxxxx", "000000", "123456", "abcdef",
     "redacted", "secret123", "password123", "token123", "key123", "live", "prod",
     "staging", "development", "localhost",
+    # Common redacted private key placeholders that appear in examples/leak reports
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 }
 
 def shannon_entropy(s: str) -> float:
