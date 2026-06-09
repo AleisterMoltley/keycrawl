@@ -383,39 +383,49 @@ DASHBOARD_HTML = """<!doctype html>
       const status = document.getElementById('status');
       const results = document.getElementById('results');
       const keysPre = document.getElementById('keys');
-      if (!url) { alert('URL?'); return; }
-      status.textContent = 'Scanning...';
-      results.classList.add('hidden');
+      if (!url) {
+        alert('Bitte URL eingeben!');
+        return;
+      }
+      status.textContent = 'Scanning ' + url + ' ...';
+      results.classList.remove('hidden');
+      keysPre.textContent = 'Warten auf Ergebnis...';
       try {
         const r = await fetch('/scan-wallet-keys', {
           method: 'POST',
           headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({url: url})
+          body: JSON.stringify({url: url, max_depth: 1, max_pages: 10, same_domain_only: true})
         });
         const d = await r.json();
         if (d.error) throw new Error(d.error);
         if (!d.keys || d.keys.length === 0) {
-          keysPre.textContent = 'Keine Wallet Keys gefunden.';
+          keysPre.textContent = 'Keine Wallet Private Keys gefunden.\n\n(Hinweis: Der Crawler holt den HTML/JS-Quelltext. Manche Keys sind nur in dynamisch geladenem JS oder nach Login. Versuche eine andere URL oder CLI für mehr Tiefe.)';
         } else {
           keysPre.textContent = d.keys.join('\n');
         }
-        results.classList.remove('hidden');
-        status.textContent = `Fertig: ${d.keys.length} Keys von ${d.target}`;
+        status.textContent = `Fertig: ${d.keys ? d.keys.length : 0} Keys von ${d.target} (${d.pages_crawled || '?'} Seiten)`;
       } catch(e) {
-        status.textContent = 'Error: ' + e.message;
+        keysPre.textContent = 'Fehler: ' + (e.message || e);
+        status.textContent = 'Scan fehlgeschlagen. Siehe Console (F12) für Details.';
         console.error(e);
       }
     }
     function copyAll() {
-      const t = document.getElementById('keys').textContent;
+      const pre = document.getElementById('keys');
+      const t = pre ? pre.textContent : '';
       if (!t) return;
       navigator.clipboard.writeText(t).then(() => {
-        const orig = event.target.innerText;
-        event.target.innerText = 'Kopiert!';
-        setTimeout(() => event.target.innerText = orig, 1200);
+        const btns = document.querySelectorAll('#results button');
+        if (btns.length > 0) {
+          const orig = btns[0].innerText;
+          btns[0].innerText = 'Kopiert!';
+          setTimeout(() => { btns[0].innerText = orig; }, 1200);
+        }
+      }).catch(() => {
+        alert('Kopieren nicht möglich. Inhalt:\n' + t);
       });
     }
-    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only).', 'color:#4ade80');
+    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage).', 'color:#4ade80');
   </script>
 </body>
 </html>
