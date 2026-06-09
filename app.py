@@ -358,19 +358,19 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
     <input id="url" type="text" value="https://stableponzi.com/" 
            class="w-full bg-zinc-950 border border-zinc-600 rounded-xl px-4 py-3 text-lg mb-3 focus:outline-none focus:border-emerald-500">
-    <button onclick="doScan()" 
+    <button id="scan-btn" onclick="doScan()" 
             class="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-xl font-medium text-lg">
       Scan for Wallet Keys
     </button>
     <div id="status" class="mt-3 text-sm text-emerald-400 min-h-[1.25rem]"></div>
   </div>
 
-  <div id="results" class="mt-6 hidden">
+  <div id="results" class="mt-6">
     <div class="flex justify-between items-center mb-2">
       <div class="font-semibold">Unredacted Wallet Keys (only)</div>
       <button onclick="copyAll()" class="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded">Copy all</button>
     </div>
-    <pre id="keys" class="bg-black p-4 rounded-xl text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800"></pre>
+    <pre id="keys" class="bg-black p-4 rounded-xl text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800">Noch keine Keys. URL eingeben und Scan klicken.</pre>
   </div>
 
   <div class="mt-8 text-xs text-zinc-500">
@@ -379,17 +379,21 @@ DASHBOARD_HTML = """<!doctype html>
 
   <script>
     async function doScan() {
-      const url = document.getElementById('url').value.trim();
+      const urlInput = document.getElementById('url');
+      const btn = document.getElementById('scan-btn');
       const status = document.getElementById('status');
-      const results = document.getElementById('results');
       const keysPre = document.getElementById('keys');
+      const url = urlInput.value.trim();
       if (!url) {
         alert('Bitte URL eingeben!');
         return;
       }
+      // Immediate feedback: disable button, show scanning
+      btn.disabled = true;
+      const origBtnText = btn.innerText;
+      btn.innerText = 'Scanning...';
       status.textContent = 'Scanning ' + url + ' ...';
-      results.classList.remove('hidden');
-      keysPre.textContent = 'Warten auf Ergebnis...';
+      keysPre.textContent = 'Scanning...';
       try {
         const r = await fetch('/scan-wallet-keys', {
           method: 'POST',
@@ -408,6 +412,9 @@ DASHBOARD_HTML = """<!doctype html>
         keysPre.textContent = 'Fehler: ' + (e.message || e);
         status.textContent = 'Scan fehlgeschlagen. Siehe Console (F12) für Details.';
         console.error(e);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = origBtnText;
       }
     }
     function copyAll() {
