@@ -353,7 +353,16 @@ DASHBOARD_HTML = """<!doctype html>
 </head>
 <body class="bg-zinc-950 text-zinc-200 p-8 max-w-2xl mx-auto">
   <h1 class="text-4xl font-bold mb-1">keycrawl</h1>
-  <p class="text-emerald-400 mb-6">Nur Wallet Private Keys • unredacted • im Browser • keine Speicherung</p>
+  <p class="text-emerald-400 mb-2">Nur Wallet Private Keys • unredacted • im Browser • keine Speicherung</p>
+
+  <!-- Static (no-JS) diagnostic box - always visible even if script is blocked or page is stale -->
+  <div style="background:#1f2937;border:2px solid #f87171;color:#fecaca;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;line-height:1.35">
+    <strong>KEIN FEEDBACK NACH KLICK?</strong><br>
+    1. Hard-Refresh: <strong>Strg+Umschalt+R</strong> (oder Cmd+Shift+R) — Browser-Cache leeren.<br>
+    2. <strong>Oben rechts oder in Railway:</strong> "Redeploy" / neuen Deploy triggern (Git-Push allein reicht manchmal nicht sofort).<br>
+    3. Zum Testen ob der Server den neuen Code hat: <a href="/debug-ui" style="color:#93c5fd;text-decoration:underline" target="_blank">/debug-ui</a> öffnen oder curlen. Sag mir den Wert von "ui_build_marker" und ob "has_toast_helper": true.<br>
+    4. F12 → Console aufmachen, Test-Button klicken und nach roten Fehlern oder "[KeyCrawl]" suchen (CSP? Script blocked?).
+  </div>
 
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
     <input id="url" type="text" placeholder="https://deine-eigene-seite.de  (nur Seiten die du selbst kontrollierst!)"
@@ -366,7 +375,7 @@ DASHBOARD_HTML = """<!doctype html>
             class="w-full bg-zinc-700 hover:bg-zinc-600 active:bg-zinc-500 py-2 rounded-xl text-sm font-medium border border-zinc-600 transition">
       Test: Nur visuelles Feedback (ohne Netzwerk/Scan — beweist dass Klick &amp; JS funktionieren)
     </button>
-    <div id="status" class="mt-3 p-3 bg-zinc-800 text-sm font-medium text-emerald-400 min-h-[2.5rem] rounded border border-emerald-600">Status: bereit. Klick auf einen der Buttons → sofort sichtbare Rückmeldung (farbig + Text + Button-Änderung + Toast).</div>
+    <div id="status" class="mt-3 p-3 bg-zinc-800 text-sm font-medium text-emerald-400 min-h-[2.5rem] rounded border border-emerald-600">Status: bereit. <strong>Zuerst den grauen "Test: Nur visuelles Feedback"-Button</strong> klicken. Wenn kein grünes Popup oben erscheint → siehe rote Box oben (Hard Refresh + Railway Redeploy + /debug-ui).</div>
   </div>
 
   <div id="results" class="mt-6 border-2 border-emerald-600 rounded-xl p-4 bg-zinc-900">
@@ -374,7 +383,7 @@ DASHBOARD_HTML = """<!doctype html>
       <div class="font-semibold text-lg">Unredacted Wallet Keys (only)</div>
       <button onclick="copyAll()" class="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded">Copy all</button>
     </div>
-    <pre id="keys" class="bg-black p-4 rounded text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800 min-h-[4rem] text-yellow-300">Klicke auf "Scan for Wallet Keys". Du siehst SOFORT Feedback (Button + Status + Text hier ändern sich). Dann erscheinen die unredacted Keys (eine pro Zeile) oder eine Fehlermeldung.</pre>
+    <pre id="keys" class="bg-black p-4 rounded text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800 min-h-[4rem] text-yellow-300">Klicke zuerst den grauen TEST-Button unten. Du solltest ein grünes Popup oben + Body-Flash + Status-Änderung sehen. Wenn nicht: die Seite im Browser ist veraltet (Hard-Refresh oder Railway Redeploy nötig). Danach den grünen Scan-Button für echte Keys.</pre>
   </div>
 
   <div class="mt-8 text-xs text-zinc-500">
@@ -644,6 +653,28 @@ async def scan_wallet_keys(req: ScanRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug-ui")
+async def debug_ui():
+    """Helps diagnose if the live server is serving the latest feedback code.
+    Visit https://your-railway-url.up.railway.app/debug-ui (or curl it).
+    If 'has_toast_helper' or 'has_test_button' is false, or the html_length is old, the deploy is stale.
+    """
+    import time
+    html = DASHBOARD_HTML  # the one actually returned by / and /dashboard
+    return {
+        "status": "ok",
+        "note": "If you are seeing no button feedback on the main page, compare this to what your browser shows. Hard refresh or force Railway redeploy if markers are missing.",
+        "html_length": len(html),
+        "has_test_button": "testFeedbackOnly()" in html,
+        "has_toast_helper": "_kcShowToast" in html,
+        "has_klick_erkannt": "KLICK ERKANNT" in html,
+        "has_onload_script_proof": "SCRIPT BLOCK EXECUTED" in html,
+        "has_no_stableponzi_default": "deine-eigene-seite.de" in html and "stableponzi" not in html[:2000],
+        "ui_build_marker": "v5-floating-toast-testbutton-2026",
+        "served_at": time.time(),
+    }
 
 
 # Allow running with: python app.py (for Railway worker or local test)
