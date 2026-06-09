@@ -356,13 +356,17 @@ DASHBOARD_HTML = """<!doctype html>
   <p class="text-emerald-400 mb-6">Nur Wallet Private Keys • unredacted • im Browser • keine Speicherung</p>
 
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
-    <input id="url" type="text" value="https://stableponzi.com/" 
+    <input id="url" type="text" placeholder="https://deine-eigene-seite.de  (nur Seiten die du selbst kontrollierst!)"
            class="w-full bg-zinc-950 border border-zinc-600 rounded-xl px-4 py-3 text-lg mb-3 focus:outline-none focus:border-emerald-500">
     <button id="scan-btn" type="button" onclick="doScan()"
-            class="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 py-3 rounded-xl font-medium text-lg transition">
+            class="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 py-3 rounded-xl font-medium text-lg transition mb-2">
       Scan for Wallet Keys
     </button>
-    <div id="status" class="mt-3 p-3 bg-zinc-800 text-sm font-medium text-emerald-400 min-h-[2.5rem] rounded border border-emerald-600">Status: bereit. Klick auf den Button → sofort sichtbare Rückmeldung (farbig + Text + Button-Änderung).</div>
+    <button type="button" onclick="testFeedbackOnly()"
+            class="w-full bg-zinc-700 hover:bg-zinc-600 active:bg-zinc-500 py-2 rounded-xl text-sm font-medium border border-zinc-600 transition">
+      Test: Nur visuelles Feedback (ohne Netzwerk/Scan — beweist dass Klick &amp; JS funktionieren)
+    </button>
+    <div id="status" class="mt-3 p-3 bg-zinc-800 text-sm font-medium text-emerald-400 min-h-[2.5rem] rounded border border-emerald-600">Status: bereit. Klick auf einen der Buttons → sofort sichtbare Rückmeldung (farbig + Text + Button-Änderung + Toast).</div>
   </div>
 
   <div id="results" class="mt-6 border-2 border-emerald-600 rounded-xl p-4 bg-zinc-900">
@@ -378,11 +382,52 @@ DASHBOARD_HTML = """<!doctype html>
   </div>
 
   <script>
+    // === SUPER VISIBLE FEEDBACK HELPERS (run even if other IDs are missing) ===
+    function _kcShowToast(msg, color) {
+      try {
+        const id = 'kc-floating-toast-' + Date.now();
+        const div = document.createElement('div');
+        div.id = id;
+        div.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:999999;padding:14px 22px;border-radius:10px;font-family:monospace;font-size:14px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.6);border:3px solid ' + (color||'#fff') + ';background:' + (color==='#f87171' ? '#7f1d1d' : '#052e16') + ';color:' + (color||'#4ade80') + ';white-space:pre-line;max-width:92vw;text-align:center;';
+        div.textContent = msg + '\n[' + new Date().toLocaleTimeString() + ']';
+        document.body.appendChild(div);
+        setTimeout(function(){ var el=document.getElementById(id); if(el) el.remove(); }, 6500);
+      } catch(e) { try { alert('FEEDBACK: ' + msg); } catch(_) {} }
+    }
+    function _kcFlashBody() {
+      try {
+        var old = document.body.style.outline;
+        document.body.style.outline = '6px solid #4ade80';
+        setTimeout(function(){ document.body.style.outline = old || ''; }, 900);
+      } catch(e){}
+    }
+    function testFeedbackOnly() {
+      // This function exists ONLY to prove that a click handler is executing in the user's browser.
+      console.log('%c[KeyCrawl] testFeedbackOnly() INVOKED', 'color:#0f0;font-size:16px;font-weight:bold');
+      _kcFlashBody();
+      _kcShowToast('✅✅✅  TEST-FEEDBACK HANDLER LÄUFT  ✅✅✅\nKlick wurde registriert. JS ist aktiv. Wenn du das siehst, funktioniert der Button-Klick grundsätzlich.', '#4ade80');
+      try {
+        var st = document.getElementById('status');
+        if (st) {
+          st.style.cssText = 'background:#052e16;border:4px solid #4ade80;color:#4ade80;font-weight:800;font-size:16px;padding:12px;';
+          st.textContent = '✅ TEST-FEEDBACK ERKANNT — Handler läuft (' + new Date().toLocaleTimeString() + ')';
+        }
+        var b = document.getElementById('scan-btn');
+        if (b) { b.style.backgroundColor = '#166534'; b.style.border = '3px solid #4ade80'; }
+        var k = document.getElementById('keys');
+        if (k) { k.style.border = '4px solid #4ade80'; k.textContent = 'TEST OK: Visueller Feedback-Pfad funktioniert. Der echte Scan-Button sollte dasselbe tun.'; }
+        // Also a classic alert as last-resort visible signal
+        setTimeout(function(){ try { alert('TEST: JS-Click-Handler funktioniert! (Dieses Alert erscheint nur beim Test-Button)'); } catch(_) {} }, 120);
+      } catch(e) { console.error(e); }
+    }
+
     async function doScan() {
       // === ULTRA RELIABLE IMMEDIATE FEEDBACK ===
       // This runs synchronously the moment the function is invoked (via onclick or listener).
       // Guarantees visible change even if later code crashes or elements are missing.
       console.log('%c[KeyCrawl] doScan() INVOKED — click registered', 'color:#0f0;font-size:13px');
+      _kcFlashBody();
+      _kcShowToast('✅ KLICK ERKANNT (doScan) — Scan wird gestartet...', '#4ade80');
       try {
         const statusEl = document.getElementById('status');
         const btnEl = document.getElementById('scan-btn');
@@ -506,7 +551,18 @@ DASHBOARD_HTML = """<!doctype html>
         b.onclick = function(ev){ if (typeof doScan === 'function') doScan(); if (prev) prev.call(this, ev); };
       }
     }, 800);
-    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage). onclick + listener', 'color:#4ade80');
+
+    // On load: prove that the script block executed at all (visible + console)
+    try {
+      console.log('%c[KeyCrawl] SCRIPT BLOCK EXECUTED — page JS is parsed and running', 'color:#0f0');
+      _kcShowToast('JS geladen & bereit (Script-Block lief durch). Klicke jetzt auf einen Button.', '#4ade80');
+      var st0 = document.getElementById('status');
+      if (st0 && st0.textContent && st0.textContent.length < 30) {
+        st0.textContent = 'JS aktiv seit ' + new Date().toLocaleTimeString() + ' — Klick-Handler sollten feuern.';
+      }
+    } catch(e){}
+
+    console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage). onclick + listener + floating toast + test button', 'color:#4ade80');
   </script>
 </body>
 </html>
