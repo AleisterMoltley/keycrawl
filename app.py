@@ -430,7 +430,7 @@ DASHBOARD_HTML = """<!doctype html>
         const div = document.createElement('div');
         div.id = id;
         div.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:999999;padding:14px 22px;border-radius:10px;font-family:monospace;font-size:14px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.6);border:3px solid ' + (color||'#fff') + ';background:' + (color==='#f87171' ? '#7f1d1d' : '#052e16') + ';color:' + (color||'#4ade80') + ';white-space:pre-line;max-width:92vw;text-align:center;';
-        div.textContent = msg + '\n[' + new Date().toLocaleTimeString() + ']';
+        div.textContent = msg + '\\n[' + new Date().toLocaleTimeString() + ']';
         document.body.appendChild(div);
         setTimeout(function(){ var el=document.getElementById(id); if(el) el.remove(); }, 6500);
       } catch(e) { try { alert('FEEDBACK: ' + msg); } catch(_) {} }
@@ -446,7 +446,7 @@ DASHBOARD_HTML = """<!doctype html>
       // This function exists ONLY to prove that a click handler is executing in the user's browser.
       console.log('%c[KeyCrawl] testFeedbackOnly() INVOKED', 'color:#0f0;font-size:16px;font-weight:bold');
       _kcFlashBody();
-      _kcShowToast('✅✅✅  TEST-FEEDBACK HANDLER LÄUFT  ✅✅✅\nKlick wurde registriert. JS ist aktiv. Wenn du das siehst, funktioniert der Button-Klick grundsätzlich.', '#4ade80');
+      _kcShowToast('✅✅✅  TEST-FEEDBACK HANDLER LÄUFT  ✅✅✅\\nKlick wurde registriert. JS ist aktiv. Wenn du das siehst, funktioniert der Button-Klick grundsätzlich.', '#4ade80');
       try {
         var st = document.getElementById('status');
         if (st) {
@@ -515,9 +515,9 @@ DASHBOARD_HTML = """<!doctype html>
         const d = await r.json();
         if (d.error) throw new Error(d.error);
         if (!d.keys || d.keys.length === 0) {
-          if (keysEl) keysEl.textContent = 'Keine Wallet Private Keys gefunden.\n\n(Hinweis: Der Crawler holt den HTML/JS-Quelltext. Manche Keys sind nur in dynamisch geladenem JS oder nach Login. Versuche eine andere URL oder CLI für mehr Tiefe.)';
+          if (keysEl) keysEl.textContent = 'Keine Wallet Private Keys gefunden.\\n\\n(Hinweis: Der Crawler holt den HTML/JS-Quelltext. Manche Keys sind nur in dynamisch geladenem JS oder nach Login. Versuche eine andere URL oder CLI für mehr Tiefe.)';
         } else {
-          if (keysEl) keysEl.textContent = d.keys.join('\n');
+          if (keysEl) keysEl.textContent = d.keys.join('\\n');
         }
         if (statusEl) {
           statusEl.style.cssText = 'background:#052e16;border:1px solid #4ade80;color:#4ade80;padding:8px;border-radius:8px;';
@@ -554,7 +554,7 @@ DASHBOARD_HTML = """<!doctype html>
           setTimeout(() => { btns[0].innerText = orig; }, 1200);
         }
       }).catch(() => {
-        alert('Kopieren nicht möglich. Inhalt:\n' + t);
+        alert('Kopieren nicht möglich. Inhalt:\\n' + t);
       });
     }
     // Attach listener reliably (belt + suspenders: we also have inline onclick on the button)
