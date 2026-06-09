@@ -350,25 +350,28 @@ DASHBOARD_HTML = """<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KeyCrawl - Nur Wallet Keys (simpel)</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- EARLY PROOF SCRIPT - runs as soon as the parser hits it, before the big main script.
-       If you see the green badge update or a toast immediately on load, JS is executing.
-       If nothing happens here but /debug-ui shows the code, your browser is blocking inline scripts (CSP / extension). -->
   <script>
+    // Early proof that JS is executing (as soon as parser reaches this in <head>).
+    // If you see the console message + the small badge, our code is running.
     (function() {
       try {
-        console.log('%c[KeyCrawl] EARLY SCRIPT EXECUTED (head)', 'color:#22c55e;font-size:13px;font-weight:bold');
-        // Try to create toast super early
-        var d = document.createElement('div');
-        d.id = 'kc-early-toast';
-        d.style.cssText = 'position:fixed;top:4px;left:4px;z-index:9999999;padding:6px 10px;background:#052e16;color:#4ade80;font:12px monospace;border:2px solid #4ade80;border-radius:4px;';
-        d.textContent = 'JS EARLY @ ' + new Date().toLocaleTimeString();
-        (document.body || document.documentElement).appendChild(d);
-        setTimeout(function(){ var el=document.getElementById('kc-early-toast'); if(el) el.remove(); }, 4000);
-        // Also mutate the h1 if it exists later
-        setTimeout(function(){
-          var h = document.querySelector('h1');
-          if (h) h.textContent = h.textContent + ' [JS:EARLY]';
-        }, 50);
+        console.log('%c[KeyCrawl] EARLY SCRIPT EXECUTED (head) — parser reached inline JS', 'color:#22c55e;font-size:13px;font-weight:bold');
+        // Schedule DOM work safely
+        function addEarlyBadge() {
+          try {
+            var d = document.createElement('div');
+            d.id = 'kc-early-toast';
+            d.style.cssText = 'position:fixed;top:4px;left:4px;z-index:9999999;padding:4px 8px;background:#052e16;color:#4ade80;font:11px monospace;border:2px solid #4ade80;border-radius:3px;';
+            d.textContent = 'JS EARLY @ ' + new Date().toLocaleTimeString();
+            (document.body || document.documentElement).appendChild(d);
+            setTimeout(function(){ var el=document.getElementById('kc-early-toast'); if(el) el.remove(); }, 3500);
+          } catch(e){}
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', addEarlyBadge, {once:true});
+        } else {
+          addEarlyBadge();
+        }
       } catch(e) { console.warn('[KeyCrawl] early script error', e); }
     })();
   </script>
