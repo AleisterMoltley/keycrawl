@@ -358,19 +358,19 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6">
     <input id="url" type="text" value="https://stableponzi.com/" 
            class="w-full bg-zinc-950 border border-zinc-600 rounded-xl px-4 py-3 text-lg mb-3 focus:outline-none focus:border-emerald-500">
-    <button id="scan-btn" onclick="doScan()" 
+    <button id="scan-btn" 
             class="w-full bg-emerald-600 hover:bg-emerald-500 py-3 rounded-xl font-medium text-lg">
       Scan for Wallet Keys
     </button>
-    <div id="status" class="mt-3 text-sm text-emerald-400 min-h-[1.25rem]"></div>
+    <div id="status" class="mt-3 p-2 bg-zinc-800 text-lg font-bold text-emerald-400 min-h-[2rem] rounded"></div>
   </div>
 
-  <div id="results" class="mt-6">
+  <div id="results" class="mt-6 border border-zinc-600 rounded-xl p-4 bg-zinc-900">
     <div class="flex justify-between items-center mb-2">
       <div class="font-semibold">Unredacted Wallet Keys (only)</div>
       <button onclick="copyAll()" class="text-xs px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded">Copy all</button>
     </div>
-    <pre id="keys" class="bg-black p-4 rounded-xl text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800">Noch keine Keys. URL eingeben und Scan klicken.</pre>
+    <pre id="keys" class="bg-black p-4 rounded text-sm font-mono overflow-auto whitespace-pre-wrap break-all border border-zinc-800 min-h-[3rem]">Klicke auf den Button um zu scannen. Die Keys erscheinen hier direkt im Browser.</pre>
   </div>
 
   <div class="mt-8 text-xs text-zinc-500">
@@ -388,12 +388,14 @@ DASHBOARD_HTML = """<!doctype html>
         alert('Bitte URL eingeben!');
         return;
       }
-      // Immediate feedback: disable button, show scanning
+      // Immediate feedback - this MUST happen
+      console.log('%c[KeyCrawl] doScan called with url:', 'color:lime', url);
       btn.disabled = true;
       const origBtnText = btn.innerText;
       btn.innerText = 'Scanning...';
+      status.style.backgroundColor = '#166534'; // green bg for visibility
       status.textContent = 'Scanning ' + url + ' ...';
-      keysPre.textContent = 'Scanning...';
+      keysPre.textContent = 'Scanning... (warte auf Server Antwort)';
       try {
         const r = await fetch('/scan-wallet-keys', {
           method: 'POST',
@@ -407,9 +409,11 @@ DASHBOARD_HTML = """<!doctype html>
         } else {
           keysPre.textContent = d.keys.join('\n');
         }
+        status.style.backgroundColor = '';
         status.textContent = `Fertig: ${d.keys ? d.keys.length : 0} Keys von ${d.target} (${d.pages_crawled || '?'} Seiten)`;
       } catch(e) {
         keysPre.textContent = 'Fehler: ' + (e.message || e);
+        status.style.backgroundColor = '#7f1d1d';
         status.textContent = 'Scan fehlgeschlagen. Siehe Console (F12) für Details.';
         console.error(e);
       } finally {
@@ -432,6 +436,14 @@ DASHBOARD_HTML = """<!doctype html>
         alert('Kopieren nicht möglich. Inhalt:\n' + t);
       });
     }
+    // Attach listener reliably
+    document.addEventListener('DOMContentLoaded', function() {
+      const scanBtn = document.getElementById('scan-btn');
+      if (scanBtn) {
+        scanBtn.addEventListener('click', doScan);
+        console.log('%c[KeyCrawl] scan button listener attached', 'color:lime');
+      }
+    });
     console.log('%c[KeyCrawl] Simple wallet-keys scanner ready (browser only, no storage).', 'color:#4ade80');
   </script>
 </body>
