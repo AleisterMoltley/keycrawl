@@ -61,6 +61,11 @@ PATTERNS: list[tuple[str, str, int, str, bool]] = [
     ("Password", r"(?i)(?:pass(?:word)?|pwd|passphrase|secret)\s*[:=]\s*['\"]?([^'\"\s]{6,64})['\"]?", 0, "Password or secret value", False),
     ("Generic Credential Pair", r"(?i)(?:user|login|email)\s*[:=]\s*['\"]?([^'\"]+)['\"]?\s*[,;]?\s*(?:pass|pwd|secret)\s*[:=]\s*['\"]?([^'\"]+)['\"]?", 0, "Username + password pair (approx)", False),
 
+    # === Wallet / chain keys (focused scope) ===
+    # Helius API keys (Solana RPC provider) - explicit support
+    ("Helius API Key", r"(?i)(?:helius(?:[-_ ]?(?:api|rpc))?[-_ ]?key)\s*[:=]\s*['\"]?([A-Za-z0-9_-]{16,80})['\"]?", 0, "Helius API key assignment", False),
+    ("Helius API Key (URL)", r"(?i)https?://[^\s'\"<>]*helius[^\s'\"<>]*[?&]api-key=([A-Za-z0-9_-]{16,80})", 0, "Helius API key in URL query parameter", False),
+
     # === Wallet Private Keys (focused scope) ===
     # Solana (very common in web leaks: base58 64-byte secret)
     ("Solana Private Key", r"(?i)(?:solana|phantom|solflare|keypair|priv(?:ate)?[-_ ]?key|seed).*?['\"]?([1-9A-HJ-NP-Za-km-z]{86,90})['\"]?", 0, "Solana wallet private key (base58)", False),
