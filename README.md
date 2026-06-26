@@ -5,7 +5,7 @@
 Crawls pages (HTML + inline JS + comments) and detects **only**:
 
 - Usernames / emails + passwords (credential pairs)
-- Wallet private keys (Solana base58, Ethereum/EVM 0x..., BIP39 mnemonics/seeds, generic wallet privkeys)
+- Wallet/private chain keys (Solana base58, Ethereum/EVM 0x..., Helius API keys, BIP39 mnemonics/seeds, generic wallet privkeys)
 
 The scope is deliberately limited to reduce noise from generic API keys, service tokens, JWTs, etc.
 

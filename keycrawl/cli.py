@@ -24,7 +24,7 @@ from . import storage
 
 app = typer.Typer(
     name="keycrawl",
-    help="Focused scanner: usernames/passwords + wallet private keys (Solana, EVM, mnemonics). For authorized testing of your own sites.",
+    help="Focused scanner: usernames/passwords + wallet/private chain keys (Solana, EVM, mnemonics, Helius). For authorized testing of your own sites.",
     add_completion=False,
 )
 console = Console()
@@ -103,9 +103,9 @@ def scan(
              "You are fully responsible for this local file.",
     ),
 ):
-    """Crawl a site and hunt for usernames/passwords + wallet private keys.
+    """Crawl a site and hunt for usernames/passwords + wallet/private chain keys.
 
-    Focused mode (passwords, usernames, Solana/EVM private keys, mnemonics).
+    Focused mode (passwords, usernames, Solana/EVM private keys, Helius API keys, mnemonics).
 
     Use --persist to add the (redacted) findings to the persistent collection
     that is also shown in the web dashboard at /dashboard.
@@ -248,7 +248,7 @@ def _export_full_scan(result: ScanResult) -> None:
 
 @app.command()
 def patterns():
-    """List the focused detection patterns (usernames/passwords + wallet private keys)."""
+    """List the focused detection patterns (usernames/passwords + wallet/private chain keys)."""
     from .scanner import PATTERNS
 
     table = Table(title="KeyCrawl Built-in Patterns")
